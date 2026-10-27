@@ -75,6 +75,17 @@ def test_departure_and_return_is_flagged_from_port():
     assert voyages["from_port"][0]
 
 
+def test_leaving_range_and_coming_back_counts_as_from_sea():
+    # regression: was flagged from_port just because an earlier port stay was in the data
+    rows = stay(0, 60, INSIDE)
+    rows += [(60 + i, 33.69 - i * 0.001, -118.20, 8.0) for i in range(30)]  # leaves port
+    rows += arrival_rows(start_min=90 + 3 * 24 * 60, minutes=60)  # back from sea 3 days later
+    voyages, labels = run(track(1, rows))
+    assert voyages.height == 1
+    assert not voyages["from_port"][0]
+    assert labels.height == 60
+
+
 def test_two_ships_two_voyages_and_summary():
     df = pl.concat([track(1, arrival_rows()), track(2, arrival_rows(start_min=500, minutes=90))])
     voyages, labels = run(df)

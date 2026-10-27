@@ -74,7 +74,7 @@ def build_voyages(df: pl.DataFrame, port: Port) -> tuple[pl.DataFrame, pl.DataFr
         how="inner",
     )
     outside = outside.with_columns(
-        from_port=pl.col("run") > 0,  # preceded by a port stay (departure, then back)
+        left_port=pl.col("run") > 0,  # the outside-run starts with a departure
         entry_gap_min=(pl.col("arrival_ts") - pl.col("t_last")).dt.total_seconds() / 60,
     )
     gate_names = list(port.gates)
@@ -107,6 +107,10 @@ def build_voyages(df: pl.DataFrame, port: Port) -> tuple[pl.DataFrame, pl.DataFr
     )
     voyages = (
         outside.join(stats, on="voyage_id", how="inner")
+        # The approach starts at a departure from this same port (berth shift, trip to an
+        # anchorage) only if the labelled part was not cut at a silence. A ship that left,
+        # went out of range and came back days later is arriving from sea.
+        .with_columns(from_port=pl.col("left_port") & (pl.col("start_ts") == pl.col("t_first")))
         .join(
             df.group_by("mmsi").agg(
                 pl.col("vessel_type").drop_nulls().mode().first(),

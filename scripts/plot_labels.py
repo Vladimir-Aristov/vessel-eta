@@ -56,14 +56,14 @@ def main() -> None:
     lab = voyages.filter(pl.col("labelled"))
     fig, ax = plt.subplots(figsize=(8, 3.5))
     bins = np.logspace(np.log10(0.5), np.log10(max(lab["duration_h"].max(), 1)), 40)
-    for from_port, label in [(False, "from sea"), (True, "returning from port")]:
+    for from_port, label in [(False, "from sea"), (True, "starts at a departure from this port")]:
         d = lab.filter(pl.col("from_port") == from_port)["duration_h"]
         ax.hist(d, bins=bins, alpha=0.7, label=f"{label} (n={d.len()})")
     ax.set_xscale("log")
     ax.set_xlabel("labelled approach length, hours (log scale)")
     ax.set_ylabel("arrivals")
     ax.legend(fontsize=8)
-    ax.set_title("How long before arrival we first see the ship (January 2023)", fontsize=10)
+    ax.set_title("How long before arrival we first see the ship (Jan–Mar 2023)", fontsize=10)
     fig.savefig(OUT / "approach_hours.png", dpi=110, bbox_inches="tight")
     plt.close(fig)
     print(f"wrote {[p.name for p in Path(OUT).glob('*.png')]}")

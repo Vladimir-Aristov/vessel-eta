@@ -3,7 +3,7 @@
 Predicting when a ship will arrive at port, and spotting ships that behave strangely,
 from raw AIS transponder data published by NOAA.
 
-> **Status:** data pipeline and ETA labels done (January 2023: 310 arrivals, 388k labelled
+> **Status:** data pipeline and ETA labels done (Jan–Mar 2023: 880 arrivals, 1.13M labelled
 > points). Baselines are next — see [Roadmap](#roadmap).
 
 ![Labelled approaches to LA / Long Beach](docs/img/approaches_map.png)
@@ -75,8 +75,8 @@ data/processed/labels_la_lb.json          # summary below
 
 ### 1. One MMSI is not always one ship
 
-Even after row-level cleaning, 294 of 418 cargo/tanker MMSIs had at least one
-position jump no ship could make. Looking at the rows, three different causes:
+Even after row-level cleaning, 294 of the 418 cargo/tanker MMSIs seen in January had
+at least one position jump no ship could make. Looking at the rows, three different causes:
 
 | what | example | how it is caught |
 |---|---|---|
@@ -86,7 +86,8 @@ position jump no ship could make. Looking at the rows, three different causes:
 
 [`tracks.py`](src/vessel_eta/tracks.py) assigns each point, in time order, to the
 longest sub-track it could physically have come from, and keeps only the main one.
-It drops 0.6% of points (2,925 spikes + 7,317 ghost/replay points). The third
+Over Jan–Mar it drops 0.9% of points (7,434 spikes + 32,109 ghost/replay points;
+ghosts on 370 of 836 ships). The third
 case was only found because an early version produced a ship that "arrived" in
 port twice in five hours without ever leaving.
 
@@ -95,13 +96,13 @@ port twice in five hours without ever leaving.
 Arrival = passing the breakwater through Angels Gate or Queens Gate. Ships waiting
 at the outer anchorages have not arrived; ships moved to the inner anchorages have.
 The polygon ([`configs/port.yaml`](configs/port.yaml)) follows the breakwater and was
-checked against the data rather than drawn by eye:
+checked against the data (Jan–Mar 2023, cleaned tracks) rather than drawn by eye:
 
-- 99.998% of moored cargo positions (AIS status 5) fall inside;
-- no anchorage swing circle is cut by the edge: of 269 at-anchor stays, the 3 with points
+- 99.999% of moored cargo positions (AIS status 5) fall inside;
+- no anchorage swing circle is cut by the edge: of 848 at-anchor stays, the 6 with points
   on both sides are ships moved between an outer and an inner anchorage without changing
-  their AIS status (two clusters 1.4–6.9 km apart, one after the other);
-- 99% of labelled arrivals are first seen inside within 0.56 km of a gate.
+  their AIS status (two clusters 1.4–9.3 km apart, one after the other);
+- labelled arrivals are first seen inside a median 0.27 km (p99 1.2 km) from a gate.
 
 ### 3. Voyages and labels
 
@@ -111,26 +112,38 @@ checked against the data rather than drawn by eye:
 - the approach before an arrival is cut at the last silence longer than 6 h, so a ship
   that passed by on day 3 and called on day 25 does not get a 22-day "ETA";
 - if the ship is silent for more than 15 min right at the entrance, the arrival time
-  is unsure: the voyage is kept but not labelled (31 of 341 arrivals);
+  is unsure: the voyage is kept but not labelled (90 of 970 arrivals);
 - passing traffic and ships still at sea when the data ends get no labels.
 
-| January 2023 | |
+| Jan–Mar 2023 | |
 |---|---|
-| arrivals detected | 341 |
-| labelled arrivals (229 cargo, 81 tanker) | 310 |
-| — of them returning after leaving port (shifts, anchoring) | 53 |
-| ships | 265 |
-| labelled points | 387,896 (56% within 24 h of arrival) |
-| approach length, median / p90 | 16.6 h / 83 h |
+| arrivals detected | 970 |
+| labelled arrivals (623 cargo, 257 tanker) | 880 |
+| — approach starts at a departure from this port (berth shift, anchoring trip) | 107 |
+| ships | 597 |
+| labelled points | 1,134,014 (53% within 24 h of arrival) |
+| approach length, median / p90 | 16.0 h / 81 h |
+
+`from_port` is true only when the labelled approach begins at the port exit. An earlier
+version set it whenever the ship had *any* earlier port stay in the data, so liner ships
+returning from Hawaii a week later counted as "from port" — and the share grew with the
+length of the data window (17% in January, 52% in March): a feature that would have
+leaked the dataset's start date into the model.
 
 ![Approach length](docs/img/approach_hours.png)
 
-The long tail is waiting: 36 labelled voyages spend more than half their approach
+The orange spike at ~7.5 h is almost entirely one ship: CATALINA PROVIDER, the
+Santa Catalina Island supply vessel, with 51 of the 880 labelled arrivals. Its labels are
+correct, but a model scored on random rows would look better than it is by learning one
+easy, repetitive route — so validation must split by vessel, and metrics are reported
+per voyage as well as per point.
+
+The long tail is waiting: 102 labelled voyages spend more than half their approach
 stationary at the outer anchorages. Predicting *that* wait is the hard part of ETA.
 
 **The bar to beat.** Straight-line distance to the nearest gate divided by current
-speed, on underway points (SOG > 5 kn) within 24 h of arrival: **MAE 150 min**, and it
-is biased — the median prediction is 93 min too early (ships slow down for the pilot
+speed, on underway points (SOG > 5 kn) within 24 h of arrival (445k points):
+**MAE 151 min**, and it is biased — the median prediction is 92 min too early (ships slow down for the pilot
 and follow the traffic lanes, not a straight line).
 
 ## Quickstart
