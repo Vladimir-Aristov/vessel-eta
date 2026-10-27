@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated
 
@@ -14,10 +15,20 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.table import Table
 
-from vessel_eta.config import DEFAULT_CONFIG, INTERIM_DIR, RAW_DIR, DataConfig, load_config
+from vessel_eta.config import (
+    DEFAULT_CONFIG,
+    INTERIM_DIR,
+    PROCESSED_DIR,
+    RAW_DIR,
+    DataConfig,
+    load_config,
+)
 from vessel_eta.data.download import Status, download
 from vessel_eta.data.ingest import ingest_day, partition_exists
 from vessel_eta.data.sources import DailyFile, daily_file, date_range
+from vessel_eta.geo import DEFAULT_PORT_CONFIG, load_port
+from vessel_eta.tracks import clean_tracks
+from vessel_eta.voyages import build_voyages, summarize
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 console = Console()
@@ -135,6 +146,51 @@ def fetch_cmd(
     if failed:
         log.error("%d days failed; rerun the same command to retry them", failed)
         raise typer.Exit(1)
+
+
+@app.command("labels")
+def labels_cmd(
+    port_config: Annotated[Path, typer.Option("--port", help="Port YAML")] = DEFAULT_PORT_CONFIG,
+    in_dir: Path = INTERIM_DIR,
+    out_dir: Path = PROCESSED_DIR,
+) -> None:
+    """Clean tracks, detect port arrivals, write voyages + ETA-labelled points."""
+    port = load_port(port_config)
+    lo, hi = port.vessel_types
+    points = (
+        pl.scan_parquet(in_dir / "**" / "*.parquet", hive_partitioning=False)
+        .filter(pl.col("vessel_type").is_between(lo, hi))
+        .collect()
+    )
+    log.info(
+        "%s points of %s ships with type %d-%d",
+        f"{points.height:,}",
+        points["mmsi"].n_unique(),
+        lo,
+        hi,
+    )
+
+    tracks, tstats = clean_tracks(points, port.tracks)
+    log.info(
+        "tracks: dropped %s spike + %s ghost points",
+        f"{tstats.points_dropped_spikes:,}",
+        f"{tstats.points_dropped_ghosts:,}",
+    )
+    voyages, labels = build_voyages(tracks, port)
+    summary = {"port": port.name, "tracks": asdict(tstats), **summarize(voyages, labels)}
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    voyages.write_parquet(out_dir / f"voyages_{port.name}.parquet")
+    labels.write_parquet(out_dir / f"eta_points_{port.name}.parquet", compression="zstd")
+    (out_dir / f"labels_{port.name}.json").write_text(json.dumps(summary, indent=2, default=str))
+
+    t = Table(title=f"ETA labels: {port.name}")
+    t.add_column("metric")
+    t.add_column("value", justify="right")
+    for k, v in summary.items():
+        if k not in ("port", "tracks"):
+            t.add_row(k, f"{v:,.1f}" if isinstance(v, float) else f"{v:,}")
+    console.print(t)
 
 
 @app.command("report")

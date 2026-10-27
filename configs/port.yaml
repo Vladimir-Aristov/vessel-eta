@@ -1,0 +1,36 @@
+# Port of Los Angeles / Long Beach (San Pedro Bay).
+#
+# "Arrival" = entering the area behind the breakwater, i.e. passing Angels Gate
+# (LA) or Queens Gate (LB). Ships that anchor in the inner anchorages have arrived;
+# ships waiting at the outer anchorages have not.
+#
+# The southern edge follows the breakwater: Angels Gate light -> Queens Gate light
+# -> Long Beach breakwater. It was checked against January 2023 AIS
+# (README, "What arrived means"): 99.998% of moored cargo positions fall inside,
+# and no anchorage swing circle crosses the edge.
+
+name: la_lb
+polygon:  # lon, lat
+  - [-118.3100, 33.7090]
+  - [-118.2514, 33.7086]   # Angels Gate
+  - [-118.1867, 33.7225]   # Queens Gate
+  - [-118.1000, 33.7200]   # east end of Long Beach breakwater
+  - [-118.1000, 33.8000]
+  - [-118.3100, 33.8000]
+gates:  # lon, lat
+  angels_gate: [-118.2514, 33.7086]
+  queens_gate: [-118.1867, 33.7225]
+
+# Which ships get ETA labels: AIS ship type 70-79 cargo, 80-89 tanker
+vessel_types: [70, 89]
+
+tracks:
+  max_speed_kn: 40       # faster implied speed between two points = not the same ship
+  sog_slack_kn: 10       # ... or implied speed > reported SOG (max of the two points) + this
+  jitter_km: 0.5         # always reachable (GPS noise at berth)
+  min_points: 10         # shorter sub-tracks are position spikes and are dropped
+
+voyages:
+  min_port_stay_min: 10  # shorter visits inside the polygon are boundary jitter
+  max_gap_h: 6           # a longer silence breaks the approach; only the last part is labelled
+  max_entry_gap_min: 15  # if the last outside -> first inside point gap is longer, arrival time is unsure

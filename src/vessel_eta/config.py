@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT / "data"
 RAW_DIR = DATA_DIR / "raw" / "ais"
 INTERIM_DIR = DATA_DIR / "interim" / "ais"
+PROCESSED_DIR = DATA_DIR / "processed"
 DEFAULT_CONFIG = ROOT / "configs" / "data.yaml"
 
 
