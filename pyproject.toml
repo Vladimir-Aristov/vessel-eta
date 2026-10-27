@@ -1,0 +1,41 @@
+[project]
+name = "vessel-eta"
+version = "0.1.0"
+description = "Vessel ETA prediction and trajectory anomaly detection on NOAA AIS data"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1",
+    "polars>=2.1.0",
+    "pyarrow>=26.0.0",
+    "pyyaml>=6.0.3",
+    "rich>=15.0.0",
+    "typer>=0.27.3",
+]
+
+[project.scripts]
+vessel-eta = "vessel_eta.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.11.3,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.3",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["network: tests that hit the real NOAA servers (deselect with -m 'not network')"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]  # long literal AIS rows read better unwrapped

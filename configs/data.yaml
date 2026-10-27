@@ -1,0 +1,17 @@
+# Which AIS days to fetch and which area to keep.
+# One raw day is ~300 MB for all US waters; after clipping to the region
+# and converting to parquet it is a few MB, so keep_raw: false saves disk.
+
+start: 2023-01-01
+end: 2023-01-31
+
+region:
+  # Approaches to the ports of Los Angeles and Long Beach (busiest US container complex).
+  name: socal
+  bbox:
+    min_lon: -121.5
+    min_lat: 32.0
+    max_lon: -117.0
+    max_lat: 35.0
+
+keep_raw: false
