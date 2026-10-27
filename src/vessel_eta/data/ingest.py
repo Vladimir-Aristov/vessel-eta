@@ -94,7 +94,9 @@ def _to_canonical(df: pl.DataFrame) -> pl.DataFrame:
         if name not in df.columns:
             cols.append(pl.lit(None, dtype=dtype).alias(name))
         elif name == "ts" and df.schema[name] == pl.String:
-            cols.append(pl.col(name).str.to_datetime("%Y-%m-%dT%H:%M:%S", time_unit="ms", time_zone="UTC"))
+            cols.append(
+                pl.col(name).str.to_datetime("%Y-%m-%dT%H:%M:%S", time_unit="ms", time_zone="UTC")
+            )
         elif name == "ts":
             cols.append(pl.col(name).cast(pl.Datetime("ms")).dt.replace_time_zone("UTC"))
         elif df.schema[name] == pl.String and dtype.is_numeric():

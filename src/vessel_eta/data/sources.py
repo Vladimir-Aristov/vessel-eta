@@ -33,14 +33,13 @@ FIRST_SUPPORTED = dt.date(2015, 1, 1)
 LAST_SUPPORTED = dt.date(2024, 12, 31)
 
 _CSV_URL = "https://coast.noaa.gov/htdata/CMSP/AISDataHandler/{y}/AIS_{y}_{m:02d}_{d:02d}.zip"
-_PARQUET_URL = (
-    "https://ocmgeodatastor1.blob.core.windows.net/marinecadastre/ais{y}/ais-{y}-{m:02d}-{d:02d}.parquet"
-)
+_BLOB = "https://ocmgeodatastor1.blob.core.windows.net/marinecadastre"
+_PARQUET_URL = _BLOB + "/ais{y}/ais-{y}-{m:02d}-{d:02d}.parquet"
 
 
 def daily_file(day: dt.date) -> DailyFile:
     if not FIRST_SUPPORTED <= day <= LAST_SUPPORTED:
-        raise ValueError(f"{day} is outside the supported range {FIRST_SUPPORTED}..{LAST_SUPPORTED}")
+        raise ValueError(f"{day} is outside supported range {FIRST_SUPPORTED}..{LAST_SUPPORTED}")
     if day.year <= 2023:
         url = _CSV_URL.format(y=day.year, m=day.month, d=day.day)
         return DailyFile(day, url, RawFormat.ZIP_CSV)
