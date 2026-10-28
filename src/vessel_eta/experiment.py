@@ -156,7 +156,11 @@ def residual_intervals(train: pl.DataFrame, df: pl.DataFrame, pred: str) -> pl.D
 
 
 def run_v2(
-    port: Port, test_start: dt.datetime, name: str = "eta_v2", feature_set: str = "base"
+    port: Port,
+    test_start: dt.datetime,
+    name: str = "eta_v2",
+    feature_set: str = "base",
+    train_end: dt.datetime | None = None,
 ) -> dict:
     """feature_set: "base" (v2 as first built), "queue" (+ smoothed AIS queue and
     PortWatch) or "all" (+ Port of Los Angeles daily summary)."""
@@ -168,7 +172,7 @@ def run_v2(
     feats, voyages = load_features(port)
     points = pl.read_parquet(PROCESSED_DIR / f"eta_points_{port.name}.parquet")
     feats = add_targets(feats, waiting_episodes(points))
-    split = make_split(feats, voyages, test_start)
+    split = make_split(feats, voyages, test_start, train_end=train_end)
 
     v1 = fit_lgbm(split.train, split.valid)
     v2 = DecomposedETA.fit(split.train, split.valid, features)
@@ -241,6 +245,7 @@ def run_v2(
         "name": name,
         "test_start": test_start.isoformat(),
         "feature_set": feature_set,
+        "train_end": (train_end or test_start).isoformat(),
         "test_voyages": test["voyage_id"].n_unique(),
         "point": point_table(test).to_dicts(),
         "point_unseen_ships": point_table(unseen).to_dicts(),
@@ -259,7 +264,8 @@ def run_v2(
     keep = ["model", "mae_h", "median_ae_h", "voyage_mae_h", "median_bias_h"]
     md = [
         f"# {name}: decomposed probabilistic ETA, features: {feature_set}",
-        f"Train: arrivals before {test_start:%Y-%m-%d}; test: from {test_start:%Y-%m-%d}, "
+        f"Train: arrivals before {(train_end or test_start):%Y-%m-%d}; "
+        f"test: from {test_start:%Y-%m-%d}, "
         f"{result['test_voyages']} voyages. Hours. v1 is retrained on the same split.",
         "## Point forecast (v2 = median of the predicted distribution)",
         _table(point_table(test).select(keep)),

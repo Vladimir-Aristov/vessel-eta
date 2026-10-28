@@ -80,7 +80,7 @@ def download_cmd(
     config: ConfigOpt = DEFAULT_CONFIG,
     start: StartOpt = None,
     end: EndOpt = None,
-    concurrency: int = 4,
+    concurrency: int = 12,  # NOAA throttles each connection (~0.75 MB/s), not the client
     out_dir: Path = RAW_DIR,
 ) -> None:
     """Only download raw daily files (resumable)."""
@@ -118,7 +118,7 @@ def fetch_cmd(
     config: ConfigOpt = DEFAULT_CONFIG,
     start: StartOpt = None,
     end: EndOpt = None,
-    concurrency: int = 4,
+    concurrency: int = 12,  # NOAA throttles each connection (~0.75 MB/s), not the client
     raw_dir: Path = RAW_DIR,
     out_dir: Path = INTERIM_DIR,
 ) -> None:
@@ -217,6 +217,10 @@ def train_cmd(
         str, typer.Option(help="v1: single regressor; v2: decomposed + quantiles")
     ] = "v1",
     features: Annotated[str, typer.Option(help="v2 only: base | queue | all")] = "base",
+    train_end: Annotated[
+        dt.datetime | None,
+        typer.Option(formats=["%Y-%m-%d"], help="v2 only: train on arrivals before this day"),
+    ] = None,
     name: Annotated[str | None, typer.Option(help="report name (default eta_<version>)")] = None,
     port_config: Annotated[Path, typer.Option("--port", help="Port YAML")] = DEFAULT_PORT_CONFIG,
 ) -> None:
@@ -226,7 +230,8 @@ def train_cmd(
     name = name or f"eta_{version}"
     start = test_start.replace(tzinfo=dt.UTC)
     if version == "v2":
-        res = run_v2(load_port(port_config), start, name, features)
+        te = train_end.replace(tzinfo=dt.UTC) if train_end else None
+        res = run_v2(load_port(port_config), start, name, features, te)
         console.print(Path(REPORTS_DIR / f"{name}.md").read_text())
         return
     res = run(load_port(port_config), start, name)

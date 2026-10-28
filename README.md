@@ -3,12 +3,13 @@
 Predicting when a ship will arrive at port, and spotting ships that behave strangely,
 from raw AIS transponder data published by NOAA.
 
-> **Status:** data → labels → two model generations (Jan–Mar 2023: 880 arrivals, 1.13M
-> labelled points). The current model splits ETA into *travel* + *will it queue* +
-> *how long*, and returns an interval: for ships under way it is 10–14% more accurate
-> than distance/speed, and its 80% intervals actually hold 79–83% of outcomes (the
-> baseline's hold 47% near port). Waiting time itself stays hard — see
-> [Decomposed ETA](#decomposed-eta-with-intervals).
+> **Status:** a full year of AIS (2023: 187M clean points, 3,744 labelled arrivals at LA /
+> Long Beach) and two model generations. The current model splits ETA into *travel* +
+> *will it queue* + *how long* and returns an 80% interval. Trained on Jan–Sep and tested
+> on Oct–Dec it beats every baseline in every ship state (−23% MAE vs distance/speed,
+> −10% vs a calibrated version on ships at anchor), and its intervals hold 80.3% of
+> outcomes. Adding public port-queue data (IMF PortWatch, the Port of LA's daily summary)
+> changed nothing measurable — see [A full year](#a-full-year-and-does-public-queue-data-help).
 
 ![Labelled approaches to LA / Long Beach](docs/img/approaches_map.png)
 
@@ -152,6 +153,8 @@ and follow the traffic lanes, not a straight line).
 
 ## First model and what it tells us
 
+*This section and the next were done on Jan–Mar 2023 (train Jan–Feb, test March).*
+
 `uv run vessel-eta train` → [`reports/eta_v1.md`](reports/eta_v1.md).
 
 **Features** ([`features.py`](src/vessel_eta/features.py)): distance and bearing to the
@@ -266,14 +269,78 @@ What would move the needle next is not model capacity but information AIS does n
 carry: berth schedules and vessel line-ups (published by the ports), and a longer history
 so that a month like March is not out of distribution.
 
+## A full year, and does public queue data help?
+
+**More data.** All of 2023 was downloaded (365 days, 3.03 billion rows for US waters,
+187M clean rows in the region; 11 malformed CSV rows over the year are skipped and
+counted). Labels: 3,744 arrivals on 1,520 ships, 4.6M labelled points; monthly shares of
+waiting and returns-from-port are stable (8–13% and 10–13%).
+
+**Queue data.** The obvious missing input is the queue itself. What exists publicly:
+
+| source | what | used as |
+|---|---|---|
+| own AIS | ships waiting near the port, 24 h and 7 d means, today vs the week | `port_waiting_24h/7d/trend` |
+| [IMF PortWatch](https://portwatch.imf.org) | daily port calls by type and estimated import/export tonnes for LA–LB (`port664`) | 7-day sums, **lagged 8 days** (published weekly) |
+| [Port of LA](https://portoflosangeles.org/business/supply-chain/ships) yearly PDF | per business day: POLA container ships at anchor / at berth, days at anchor for departed ships | last report and 5-report means, from the next day |
+| Marine Exchange of Southern California | the official queue and line-up | not used: paid, no redistribution |
+
+The Port of LA summary has one surprise: in 2023 POLA container ships waited at anchor
+for **about 2 hours on average** (0 ships at anchor on 159 of 246 days). The 2021–22 queue
+was gone, so the multi-day waits in this data are mostly tankers, bulkers and Long Beach
+calls — which that summary does not cover.
+
+**Results** — the same test set throughout: arrivals Oct–Dec 2023, 954 voyages; hours.
+
+| model | trained on | point MAE | voyage MAE | P10–P90 coverage | pinball |
+|---|---|---|---|---|---|
+| distance / speed | — | 66.1 | 12.6 | | |
+| calibrated distance / speed | Jan–Sep | 57.3 | 15.5 | 0.81 | 20.1 |
+| v1 (single LightGBM) | Jan–Sep | 52.0 | 11.9 | | |
+| v2, base features | Jan–**Mar** | 54.5 | 13.5 | 0.86 | 24.9 |
+| **v2, base features** | Jan–Sep | **50.7** | **11.4** | **0.80** | **17.3** |
+| v2, + AIS queue + PortWatch | Jan–Sep | 51.1 | 11.3 | 0.80 | 17.4 |
+| v2, + Port of LA summary | Jan–Sep | 51.1 | 11.4 | 0.80 | 17.5 |
+
+By ship state (v2 base, Jan–Sep; MAE in hours, then P10–P90 coverage / median width):
+
+| ship state | distance / speed | calibrated | v1 | v2 | v2 interval | baseline interval |
+|---|---|---|---|---|---|---|
+| moving, < 30 km from gate | 13.5 | 14.1 | 13.2 | **13.0** | 0.82 / 25 h | 0.46 / 16 h |
+| moving, ≥ 30 km | 17.6 | 19.5 | 16.1 | **15.0** | 0.76 / 21 h | 0.90 / 78 h |
+| slow (0.5–5 kn) | 81.9 | 80.3 | **69.3** | 69.9 | 0.80 / 194 h | 0.67 / 206 h |
+| stationary | 107.6 | 88.5 | 81.9 | **80.0** | 0.83 / 237 h | 0.81 / 273 h |
+
+What this says:
+
+1. **More history was the lever, not more sources.** On the same Oct–Dec test, going
+   from 3 to 9 months of training cut voyage MAE by 16% and pinball loss by 31%, put
+   interval coverage on target, and turned v2 from worse-than-physics per voyage (13.5 vs
+   12.6) into better (11.4). Waiting time — hopeless on three months — is now predicted
+   better than the calibrated baseline (80 vs 89 h at anchor).
+2. **Public queue data added nothing measurable** (±0.4 h, within noise). PortWatch is
+   itself built from AIS and arrives a week late; the Port of LA summary covers container
+   ships that barely queued in 2023. What the model already sees — ships waiting near the
+   port right now, from its own AIS — carries the same information sooner.
+3. **The test period matters as much as the model.** v2 trained on Jan–Feb scored 93.7 h
+   MAE on March; trained on Jan–Mar it scores 54.5 h on Oct–Dec: late 2023 had fewer and
+   shorter queues (22% of moving
+   ships went on to wait vs 37% in March). Numbers from different test windows are not
+   comparable, which is why every row above uses the same one.
+
+Reproduce: `uv run vessel-eta portwatch`, save the Port of LA PDF to `data/external/`, then
+`uv run vessel-eta train --version v2 --test-start 2023-10-01 --features base|queue|all`
+(add `--train-end 2023-04-01` for the 3-month row). Reports: `reports/eta_v2_2023_*.md`.
+
 ## Quickstart
 
 ```bash
 uv sync
-uv run vessel-eta fetch                     # range + region from configs/data.yaml
+uv run vessel-eta fetch                     # range + region from configs/data.yaml (all of 2023)
 uv run vessel-eta fetch --start 2023-02-01 --end 2023-02-07
 uv run vessel-eta report                    # data quality summary
 uv run vessel-eta labels                    # tracks -> voyages -> ETA labels
+uv run vessel-eta portwatch                 # IMF PortWatch daily data (optional features)
 uv run python scripts/plot_labels.py        # README figures
 uv run python scripts/cv_ablation.py        # model selection (grouped CV, Jan-Feb)
 uv run vessel-eta train                     # v1: baselines + LightGBM, March test -> reports/
@@ -282,7 +349,9 @@ uv run python scripts/cv_v2_coverage.py     # v2 interval coverage, grouped CV i
 uv run pytest
 ```
 
-NOAA's server is slow (~0.5–1 MB/s per connection); `--concurrency` helps.
+NOAA's server throttles each connection (0.1–1.9 MB/s, ~0.75 MB/s on average), not the
+client, so throughput scales with connections: going from 6 to 12 took the pipeline from
+~1 to ~6 days of data per minute. The default is 12; failed connects are retried.
 
 ## Roadmap
 
@@ -290,10 +359,12 @@ NOAA's server is slow (~0.5–1 MB/s per connection); `--concurrency` helps.
 2. ~~**Trajectories and labels**~~ — clean tracks, port geofence, arrivals, ETA labels.
 3. ~~**Baselines**~~ — causal features, time + ship validation, LightGBM vs physics.
 4. ~~**Decomposed ETA**~~ — travel + will-it-wait + waiting time, conformal intervals.
-5. **More signal** — a year of data; port line-up / berth schedules as features; then a
-   sequence model (GRU / transformer) over the recent track for the travel part.
-6. **Anomalies** — AIS gaps, loitering, rendezvous; vessel-type classifier from motion only.
-7. **Serving** — FastAPI endpoint, Docker, a map demo, drift monitoring.
+5. ~~**More data and public queue data**~~ — a year of AIS (the lever); PortWatch and the
+   Port of LA summary tested (no gain).
+6. **Next signal** — berth line-ups (Marine Exchange, paid) or terminal schedules; several
+   years so seasonality is learnable; a sequence model (GRU / transformer) for travel time.
+7. **Anomalies** — AIS gaps, loitering, rendezvous; vessel-type classifier from motion only.
+8. **Serving** — FastAPI endpoint, Docker, a map demo, drift monitoring.
 
 ## Layout
 
@@ -306,6 +377,8 @@ src/vessel_eta/
   data/sources.py          URL + format per day
   data/download.py         async resumable downloader
   data/ingest.py           raw -> clean parquet
+  data/portwatch.py        IMF PortWatch download + lagged features
+  data/pola.py             Port of LA daily container summary (PDF) parser
   geo.py                   distances, port geofence
   tracks.py                spikes / ghosts / replays -> one clean track per ship
   voyages.py               arrivals, approach segments, ETA labels
