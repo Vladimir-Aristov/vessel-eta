@@ -29,6 +29,7 @@ from vessel_eta.data.ingest import ingest_day, partition_exists
 from vessel_eta.data.sources import DailyFile, daily_file, date_range
 from vessel_eta.features import port_state
 from vessel_eta.geo import DEFAULT_PORT_CONFIG, load_port
+from vessel_eta.scalars import as_float
 from vessel_eta.tracks import clean_tracks
 from vessel_eta.voyages import build_voyages, summarize
 
@@ -148,6 +149,7 @@ def fetch_cmd(
             if r.status is Status.MISSING:
                 log.warning("%s: not published on the server", r.file.day)
                 continue
+            assert r.path is not None  # DOWNLOADED / SKIPPED always carry the file path
             try:  # CPU-bound: run off the event loop so downloads keep streaming
                 await asyncio.to_thread(_ingest_and_log, r.file, r.path, out_dir, cfg)
             except Exception:  # one bad file must not stop the whole range
@@ -265,6 +267,8 @@ def portwatch_cmd(
     s = (start.date() if start else cfg.start) - dt.timedelta(days=30)  # room for the lag
     e = end.date() if end else cfg.end
     daily = portwatch.load(portwatch.fetch(s, e))
+    if daily is None:
+        raise typer.Exit(1)
     log.info("PortWatch: %d days, %s .. %s", daily.height, daily["day"].min(), daily["day"].max())
 
 
@@ -317,13 +321,14 @@ def report_cmd(out_dir: Path = INTERIM_DIR) -> None:
     t = Table(title=f"AIS partitions in {out_dir}")
     t.add_column("metric")
     t.add_column("value", justify="right")
-    t.add_row("days", f"{df.height}  ({df['day'].min()} .. {df['day'].max()})")
+    first, last = df["day"].min(), df["day"].max()
+    t.add_row("days", f"{df.height}  ({first!s} .. {last!s})")
     t.add_row("raw rows (all US)", f"{df['rows_raw'].sum():,}")
     t.add_row("rows in region", f"{df['rows_in_region'].sum():,}")
     for c in dropped.columns:
         t.add_row(f"  dropped: {c}", f"{dropped[c].sum():,}")
     t.add_row("clean rows", f"{df['rows_out'].sum():,}")
-    t.add_row("vessels per day (median)", f"{int(df['vessels'].median()):,}")
+    t.add_row("vessels per day (median)", f"{as_float(df['vessels'].median()):,.0f}")
     console.print(t)
 
 

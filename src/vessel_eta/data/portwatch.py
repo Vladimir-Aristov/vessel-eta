@@ -21,6 +21,7 @@ import httpx
 import polars as pl
 
 from vessel_eta.config import DATA_DIR
+from vessel_eta.scalars import as_date
 
 URL = (
     "https://services9.arcgis.com/weJ1QsnbMYJlCHdG/ArcGIS/rest/services/"
@@ -80,7 +81,11 @@ def load(path: Path | None = None) -> pl.DataFrame | None:
 def lagged_features(daily: pl.DataFrame, lag_days: int = LAG_DAYS) -> pl.DataFrame:
     """day -> 7-day sums over [day - lag - 6, day - lag]."""
     full = pl.DataFrame(
-        {"day": pl.date_range(daily["day"].min(), daily["day"].max(), "1d", eager=True)}
+        {
+            "day": pl.date_range(
+                as_date(daily["day"].min()), as_date(daily["day"].max()), "1d", eager=True
+            )
+        }
     ).join(daily, on="day", how="left")  # missing days stay null, never 0
     sums = full.select(
         "day", *[pl.col(c).rolling_sum(7, min_samples=7).alias(name) for c, name in COLUMNS.items()]

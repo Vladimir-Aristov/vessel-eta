@@ -21,6 +21,7 @@ from vessel_eta.experiment import load_features
 from vessel_eta.features import BASE_FEATURES
 from vessel_eta.geo import Port
 from vessel_eta.modeling import make_split
+from vessel_eta.scalars import as_datetime
 
 FAR_FUTURE = dt.datetime(2100, 1, 1, tzinfo=dt.UTC)
 NO_WIDEN = {True: (0.0, 0.0), False: (0.0, 0.0)}
@@ -69,7 +70,7 @@ def recalibrate(
     """
     model, _ = artifact.load(path)
     feats, voyages = _labelled_features(port)
-    end = end or voyages["arrival_ts"].max()
+    end = end or as_datetime(voyages["arrival_ts"].max())
     start = end - dt.timedelta(days=days)
     recent = voyages.filter(pl.col("arrival_ts").is_between(start, end, closed="left"))
     recent = recent.select("voyage_id")

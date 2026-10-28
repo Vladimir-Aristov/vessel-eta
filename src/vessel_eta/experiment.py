@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import polars as pl
@@ -22,6 +23,7 @@ from vessel_eta.modeling import (
     make_split,
     metrics,
 )
+from vessel_eta.scalars import as_float
 
 REPORTS_DIR = ROOT / "reports"
 MODELS_DIR = ROOT / "models"
@@ -71,7 +73,7 @@ def run(port: Port, test_start: dt.datetime, name: str = "eta_v1") -> dict:
 
     seen = test.filter("seen_ship")
     unseen = test.filter(~pl.col("seen_ship"))
-    result = {
+    result: dict[str, Any] = {
         "name": name,
         "test_start": test_start.isoformat(),
         "sizes": {
@@ -224,7 +226,7 @@ def run_v2(
     mv = test.filter(~pl.col("waiting_now"))
     y = mv["stop_next"].cast(pl.Int8).to_numpy()
     p = mv["p_stop"].to_numpy()
-    base_rate = float(split.train.filter(~pl.col("waiting_now"))["stop_next"].mean())
+    base_rate = as_float(split.train.filter(~pl.col("waiting_now"))["stop_next"].mean())
     rel = (
         mv.with_columns(bin=(pl.col("p_stop") * 5).floor().clip(upper_bound=4) / 5)
         .group_by("bin")
@@ -255,7 +257,7 @@ def run_v2(
         "slices": slices,
         "stop_classifier": classifier,
         "reliability": rel.to_dicts(),
-        "routing_share_waiting": float(test["waiting_now"].mean()),
+        "routing_share_waiting": as_float(test["waiting_now"].mean()),
         "conformal_widening_log": {str(k): v for k, v in v2.widen.items()},
         "conformal_widening_before": {str(k): v for k, v in v2_raw_widen.items()},
     }

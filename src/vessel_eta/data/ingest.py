@@ -142,9 +142,9 @@ def _iter_csv_blocks(path: Path, stats: IngestStats) -> Iterator[pl.DataFrame]:
                 ),
             )
             for batch in reader:
-                yield pl.from_arrow(pa.Table.from_batches([batch])).rename(
-                    _CSV_RENAME, strict=False
-                )
+                frame = pl.from_arrow(pa.Table.from_batches([batch]))
+                assert isinstance(frame, pl.DataFrame)  # a Table always gives a DataFrame
+                yield frame.rename(_CSV_RENAME, strict=False)
 
 
 def _read_geoparquet(path: Path) -> pl.LazyFrame:

@@ -23,6 +23,7 @@ import numpy as np
 import polars as pl
 
 from vessel_eta.geo import Port
+from vessel_eta.scalars import as_float
 
 POINT_COLS = [
     "mmsi", "ts", "lat", "lon", "sog", "cog", "heading", "status",
@@ -153,7 +154,8 @@ def build_voyages(df: pl.DataFrame, port: Port) -> tuple[pl.DataFrame, pl.DataFr
         .select("voyage_id", *POINT_COLS, "gate_km", "eta_min")
         .sort("voyage_id", "ts")
     )
-    assert labels["eta_min"].min() is None or labels["eta_min"].min() > 0, "non-positive ETA"
+    if labels.height and as_float(labels["eta_min"].min()) <= 0:
+        raise AssertionError("non-positive ETA")
     return voyages, labels
 
 

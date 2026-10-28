@@ -24,14 +24,15 @@ from vessel_eta import artifact
 from vessel_eta.decompose import WAITING_NOW_KN, DecomposedETA
 from vessel_eta.features import build_features
 from vessel_eta.geo import DEFAULT_PORT_CONFIG, Port, load_port
+from vessel_eta.scalars import as_datetime
 from vessel_eta.tracks import clean_tracks
 
 VOYAGE = "request"
-STATE_SCHEMA = {
+STATE_SCHEMA: dict[str, pl.DataType] = {
     "bucket": pl.Datetime("ms", "UTC"),
-    "port_waiting": pl.Int64,
-    "port_inbound": pl.Int64,
-    "port_in_port": pl.Int64,
+    "port_waiting": pl.Int64(),
+    "port_inbound": pl.Int64(),
+    "port_in_port": pl.Int64(),
 }
 
 
@@ -105,7 +106,7 @@ def request_features(
         state_df = pl.DataFrame(schema=STATE_SCHEMA)
     else:
         # build_features joins the *previous* 30-min bucket, so file the counts there
-        bucket = table["ts"].max().replace(second=0, microsecond=0)
+        bucket = as_datetime(table["ts"].max()).replace(second=0, microsecond=0)
         bucket = bucket.replace(minute=bucket.minute // 30 * 30) - dt.timedelta(minutes=30)
         state_df = pl.DataFrame(
             {"bucket": [bucket], "port_waiting": [state.waiting],

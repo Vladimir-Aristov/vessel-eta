@@ -184,7 +184,7 @@ class StopClassifier:
 
     def predict(self, df: pl.DataFrame) -> np.ndarray:
         x = _x(df, self.features)
-        return self.booster.predict(x, num_iteration=self.booster.best_iteration)
+        return np.asarray(self.booster.predict(x, num_iteration=self.booster.best_iteration))
 
 
 # ------------------------------------------------------------------ composition

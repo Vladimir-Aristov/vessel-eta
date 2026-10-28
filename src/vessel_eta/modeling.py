@@ -28,6 +28,7 @@ import polars as pl
 from sklearn.linear_model import LinearRegression
 
 from vessel_eta.features import BASE_FEATURES, CATEGORICAL
+from vessel_eta.scalars import as_float
 
 SLICES = {
     "moving, < 30 km from gate": (pl.col("sog") >= 5) & (pl.col("gate_km") < 30),
@@ -92,10 +93,10 @@ def metrics(df: pl.DataFrame, pred_col: str) -> dict[str, float]:
     )
     per_voyage = e.group_by("voyage_id").agg(pl.col("ae_h").mean())
     return {
-        "mae_h": e["ae_h"].mean(),
-        "median_ae_h": e["ae_h"].median(),
-        "voyage_mae_h": per_voyage["ae_h"].mean(),
-        "median_bias_h": e["err_h"].median(),  # + = predicts too late
+        "mae_h": as_float(e["ae_h"].mean()),
+        "median_ae_h": as_float(e["ae_h"].median()),
+        "voyage_mae_h": as_float(per_voyage["ae_h"].mean()),
+        "median_bias_h": as_float(e["err_h"].median()),  # + = predicts too late
         "n_points": e.height,
         "n_voyages": per_voyage.height,
     }
@@ -114,7 +115,8 @@ def breakdown(df: pl.DataFrame, pred_cols: list[str], by: str = "observable") ->
             parts.append((label, df.filter((h >= lo) & (h < hi))))
     rows = []
     for name, part in parts:
-        row = {"slice": name, "n": part.height, "median_true_eta_h": part["eta_min"].median() / 60}
+        median_h = as_float(part["eta_min"].median()) / 60
+        row: dict[str, object] = {"slice": name, "n": part.height, "median_true_eta_h": median_h}
         row.update({c: metrics(part, c)["mae_h"] for c in pred_cols})
         rows.append(row)
     return pl.DataFrame(rows)

@@ -202,7 +202,10 @@ class SequenceTravelModel:
 
         self.net = _Net(xtr.shape[1], self.use_sequence, dropout=self.dropout).to(dev)
         opt = torch.optim.AdamW(self.net.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-        best, best_state, bad = np.inf, None, 0
+        best, bad = np.inf, 0
+        # start from the initial weights: if validation never improves (or is NaN) we still
+        # restore a valid state instead of crashing on None
+        best_state = {k: v.detach().clone() for k, v in self.net.state_dict().items()}
         for epoch in range(self.epochs):
             self.net.train()
             for *inp, y in self._batches(tr_steps, tr_vids, tr_rows, xtr, ttr, str_, ytr, True):

@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import shapely
 import yaml
+from numpy.typing import ArrayLike
 
 from vessel_eta.config import ROOT
 
@@ -52,10 +53,10 @@ class Port:
     tracks: TrackParams = field(default_factory=TrackParams)
     voyages: VoyageParams = field(default_factory=VoyageParams)
 
-    def contains(self, lon: np.ndarray, lat: np.ndarray) -> np.ndarray:
+    def contains(self, lon: ArrayLike, lat: ArrayLike) -> np.ndarray:
         return shapely.contains_xy(self.polygon, np.asarray(lon), np.asarray(lat))
 
-    def gate_distances_km(self, lon: np.ndarray, lat: np.ndarray) -> np.ndarray:
+    def gate_distances_km(self, lon: ArrayLike, lat: ArrayLike) -> np.ndarray:
         """(n_points, n_gates) distance matrix, gates in config order."""
         lon, lat = np.asarray(lon, dtype=np.float64), np.asarray(lat, dtype=np.float64)
         return np.stack(
