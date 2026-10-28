@@ -1,15 +1,40 @@
-# vessel-eta
+# vessel-eta — when will this ship reach Los Angeles?
 
-Predicting when a ship will arrive at port, and spotting ships that behave strangely,
-from raw AIS transponder data published by NOAA.
+[![ci](https://github.com/Vladimir-Aristov/vessel-eta/actions/workflows/ci.yml/badge.svg)](https://github.com/Vladimir-Aristov/vessel-eta/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> **Status:** two years of AIS (2023–24: 378M clean points, 7,937 labelled arrivals at LA /
-> Long Beach). The model splits ETA into *travel* + *will it queue* + *how long* and returns
-> an 80% interval. **Trained on 2023 and tested on all of 2024** it beats every baseline
-> (−18% MAE vs distance/speed, −8% vs a calibrated version), and with monthly
-> re-calibration its intervals hold 78.7% of outcomes (80.1% for ships under way) — see
-> [Out-of-time test on 2024](#out-of-time-test-train-2023-test-2024). Public port-queue data
-> and a GRU over the raw track were tested and did not help.
+Probabilistic ETA for cargo ships and tankers approaching the ports of **Los Angeles and
+Long Beach**, built end to end from raw NOAA AIS transponder data: 6.1 billion raw rows →
+378M clean positions (2023–24) → 7,937 port arrivals → a model that says not just *when*
+but *how sure*: "2 h if it goes straight in, 1–4 days if it queues".
+
+**Results at a glance** — trained on 2023, tested on every arrival of 2024 (4,193 voyages):
+
+| | distance / speed | calibrated physics | single LightGBM | **this model** |
+|---|---|---|---|---|
+| MAE, all predictions | 85.8 h | 76.4 h | 72.9 h | **70.5 h** |
+| MAE, ships under way far out | 21.5 h | 22.5 h | 19.1 h | **17.7 h** |
+| MAE, ships at anchor | 138.5 h | 119.6 h | 116.5 h | **112.9 h** |
+| 80% interval actually holds | — | 0.78 | — | **0.79** (0.80 under way) |
+
+**What is in here**
+
+- **Data engineering**: resumable parallel downloader and streaming ingest for two NOAA
+  formats (zipped CSV, GeoParquet); malformed rows, duplicate and junk MMSIs handled and
+  counted ([Data](#data)).
+- **Messy-data detective work**: one MMSI is not always one ship — position spikes, "ghost"
+  positions and stale messages replayed hours later, separated by physical consistency
+  ([Tracks](#1-one-mmsi-is-not-always-one-ship)).
+- **Label design**: a breakwater geofence validated against the data, arrivals, and a
+  leak that made a feature encode the dataset's start date — caught and fixed.
+- **Validation that does not flatter**: time split + held-out ships, causal features with
+  a look-ahead test that is itself mutation-tested, slices you can see at prediction time.
+- **Modelling the real structure**: ETA = travel + will it queue + how long, quantile
+  LightGBMs + classifier, conformal intervals ([Decomposed ETA](#decomposed-eta-with-intervals)).
+- **Negative results, reported**: public port-queue data (IMF PortWatch, Port of LA) and a
+  GRU over the raw track did not beat the simpler model ([GRU](#does-a-sequence-model-help-gru-for-travel-time)).
+- **Out-of-time test and drift**: a year later the model holds up but its intervals go
+  stale; monthly re-calibration fixes it ([2024](#out-of-time-test-train-2023-test-2024)).
 
 ![Labelled approaches to LA / Long Beach](docs/img/approaches_map.png)
 
@@ -20,9 +45,8 @@ NOAA archives these broadcasts for all US waters: billions of points per year, f
 
 - **ETA prediction** is a real product problem (ports, terminals, logistics, insurers)
   with labels that come for free: the moment a ship actually arrived is in the data.
-- **Behavioural anomalies** — transponders switched off, ships loitering or meeting at sea,
-  a declared vessel type that does not match how the ship moves — matter for maritime
-  safety and enforcement, and have almost no labelled data.
+- **Behavioural anomalies** (planned) — transponders switched off, ships loitering or
+  meeting at sea, a declared vessel type that does not match how the ship moves.
 
 The first region is the approaches to **Los Angeles / Long Beach**, the busiest container
 port complex in the US.

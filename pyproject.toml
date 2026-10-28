@@ -1,8 +1,10 @@
 [project]
 name = "vessel-eta"
 version = "0.1.0"
-description = "Vessel ETA prediction and trajectory anomaly detection on NOAA AIS data"
+description = "Probabilistic vessel ETA for the ports of Los Angeles and Long Beach from NOAA AIS data"
 readme = "README.md"
+license = "MIT"
+authors = [{ name = "Vladimir Aristov" }]
 requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28.1",
