@@ -332,6 +332,39 @@ Reproduce: `uv run vessel-eta portwatch`, save the Port of LA PDF to `data/exter
 `uv run vessel-eta train --version v2 --test-start 2023-10-01 --features base|queue|all`
 (add `--train-end 2023-04-01` for the 3-month row). Reports: `reports/eta_v2_2023_*.md`.
 
+## Does a sequence model help? (GRU for travel time)
+
+[`sequence.py`](src/vessel_eta/sequence.py), [`scripts/travel_models.py`](scripts/travel_models.py)
+→ [`reports/travel_models.md`](reports/travel_models.md).
+
+The travel part T (time to the next event for a ship under way) is where motion matters
+most, so it is the natural place for a model that reads the raw track instead of
+hand-made summaries. The GRU sees the last 2 hours of the voyage on the 5-minute grid
+(position relative to the port, speed, course, stopped or not, time gaps), joined with
+the same tabular features LightGBM uses; it outputs the same 7 monotone quantiles and is
+trained with pinball loss on PyTorch/MPS, with early stopping on held-out ships. A
+tabular-only MLP with the identical head isolates what the sequence itself adds.
+
+Test: ships under way, arrivals Oct–Dec 2023 (180k rows); every choice made on
+held-out ships of Jan–Sep, test scored once.
+
+| model for T | pinball (log) | MAE | median AE | P10–P90 coverage |
+|---|---|---|---|---|
+| LightGBM, tabular | 0.084 | 1.08 h | 0.43 h | 0.79 |
+| MLP, same tabular inputs | 0.097 | 1.27 h | 0.50 h | 0.76 |
+| GRU over 2 h of track + tabular | 0.094 | 1.26 h | 0.50 h | 0.78 |
+| GRU, + dropout / weight decay | 0.116 | 1.41 h | 0.66 h | 0.94 |
+| 0.75 × LightGBM + 0.25 × GRU (weight chosen on valid) | **0.083** | **1.08 h** | **0.41 h** | **0.82** |
+
+- **The track carries signal** that the tabular features miss: on identical inputs and
+  head, adding the GRU branch improves pinball by ~3–6% over the MLP.
+- **But gradient boosting on good features stays ahead** of both networks, as is usual for
+  tabular problems of this size (~400k training rows, highly correlated within voyages).
+  The GRU starts to overfit after 4–5 epochs; stronger regularisation made it worse.
+- **The ensemble wins, barely**: −0.3% pinball, −4% median error, coverage closer to 0.8.
+  Not worth a second model and a PyTorch dependency in serving, so v2 keeps LightGBM for T.
+  (Neural results move by a few % between runs: MPS training is not bit-reproducible.)
+
 ## Quickstart
 
 ```bash
@@ -361,8 +394,9 @@ client, so throughput scales with connections: going from 6 to 12 took the pipel
 4. ~~**Decomposed ETA**~~ — travel + will-it-wait + waiting time, conformal intervals.
 5. ~~**More data and public queue data**~~ — a year of AIS (the lever); PortWatch and the
    Port of LA summary tested (no gain).
-6. **Next signal** — berth line-ups (Marine Exchange, paid) or terminal schedules; several
-   years so seasonality is learnable; a sequence model (GRU / transformer) for travel time.
+6. **Next signal** — ~~a sequence model for travel time~~ (GRU: signal, but no gain over
+   LightGBM); a second year (2024) as an out-of-time test; berth line-ups (Marine
+   Exchange, paid) or terminal schedules.
 7. **Anomalies** — AIS gaps, loitering, rendezvous; vessel-type classifier from motion only.
 8. **Serving** — FastAPI endpoint, Docker, a map demo, drift monitoring.
 
@@ -379,6 +413,7 @@ src/vessel_eta/
   data/ingest.py           raw -> clean parquet
   data/portwatch.py        IMF PortWatch download + lagged features
   data/pola.py             Port of LA daily container summary (PDF) parser
+  sequence.py              GRU (+ tabular) quantile model for travel time
   geo.py                   distances, port geofence
   tracks.py                spikes / ghosts / replays -> one clean track per ship
   voyages.py               arrivals, approach segments, ETA labels
@@ -389,6 +424,7 @@ src/vessel_eta/
 scripts/plot_labels.py     README figures
 scripts/cv_ablation.py     model selection table
 scripts/cv_v2_coverage.py  v2 interval coverage in grouped CV
+scripts/travel_models.py   LightGBM vs MLP vs GRU for travel time
 reports/                   eval reports (markdown + json)
 tests/                     offline tests (fake HTTP server, synthetic files and tracks)
 ```

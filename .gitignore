@@ -10,7 +10,7 @@ wheels/
 .venv
 
 # Data and artefacts (never commit)
-/data/
+/data
 /models/
 /mlruns/
 .pytest_cache/

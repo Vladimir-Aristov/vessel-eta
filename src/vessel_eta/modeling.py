@@ -56,12 +56,16 @@ def make_split(
     valid_frac=0.2,
     seed=0,
     train_end: dt.datetime | None = None,
+    test_end: dt.datetime | None = None,
 ) -> Split:
-    """train_end: train only on arrivals before it (default: up to test_start)."""
+    """train_end: train only on arrivals before it (default: up to test_start).
+    test_end: test only on arrivals before it (default: everything after test_start)."""
     arrivals = voyages.select("voyage_id", "arrival_ts")
     df = feats.join(arrivals, on="voyage_id", how="inner")
     train_all = df.filter(pl.col("arrival_ts") < (train_end or test_start))
     test = df.filter(pl.col("arrival_ts") >= test_start)
+    if test_end is not None:
+        test = test.filter(pl.col("arrival_ts") < test_end)
 
     ships = np.sort(train_all["mmsi"].unique().to_numpy())
     rng = np.random.default_rng(seed)

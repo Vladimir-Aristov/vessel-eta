@@ -1,0 +1,203 @@
+{
+  "results": [
+    {
+      "model": "LightGBM (tabular)",
+      "fit_s": 67.22948598861694,
+      "pinball_log": 0.08370782820956246,
+      "mae_h": 1.0769782790022202,
+      "median_ae_h": 0.4322204922140609,
+      "mae_h_near": 0.5207618490509156,
+      "mae_h_far": 1.2099023910323463,
+      "coverage_p10_p90": 0.7921570588692918,
+      "valid_pinball_log": 0.09789224774110175
+    },
+    {
+      "model": "MLP (tabular)",
+      "fit_s": 124.48638892173767,
+      "valid_pinball_log": 0.1196163447738583,
+      "pinball_log": 0.09699208445365433,
+      "mae_h": 1.2721550121196528,
+      "median_ae_h": 0.5041998969184028,
+      "mae_h_near": 0.5960308555940756,
+      "mae_h_far": 1.4337345669273893,
+      "coverage_p10_p90": 0.7613443136731904
+    },
+    {
+      "model": "GRU (2 h track) + tabular",
+      "fit_s": 86.7248227596283,
+      "valid_pinball_log": 0.10922753485687772,
+      "pinball_log": 0.09353140863283413,
+      "mae_h": 1.2554394225424936,
+      "median_ae_h": 0.5018102010091146,
+      "mae_h_near": 0.5563654008925989,
+      "mae_h_far": 1.4225035158834196,
+      "coverage_p10_p90": 0.7811100367863613
+    },
+    {
+      "model": "GRU + tabular, regularised",
+      "fit_s": 119.17239809036255,
+      "valid_pinball_log": 0.1271963089501805,
+      "pinball_log": 0.11562657065805951,
+      "mae_h": 1.4078934953498317,
+      "median_ae_h": 0.6555369059244791,
+      "mae_h_near": 0.6265181091036677,
+      "mae_h_far": 1.594625896239286,
+      "coverage_p10_p90": 0.9377521421665055
+    },
+    {
+      "model": "LightGBM + GRU (2 h track) + tabular (w=0.25)",
+      "fit_s": NaN,
+      "valid_pinball_log": 0.0973777938572758,
+      "pinball_log": 0.0834747575165522,
+      "mae_h": 1.0751072792523684,
+      "median_ae_h": 0.41480101585626505,
+      "mae_h_near": 0.5161605643524525,
+      "mae_h_far": 1.2086838723723017,
+      "coverage_p10_p90": 0.8158292490469998
+    }
+  ],
+  "histories": {
+    "MLP (tabular)": [
+      {
+        "epoch": 0,
+        "valid_pinball_log": 0.15071879762090784
+      },
+      {
+        "epoch": 1,
+        "valid_pinball_log": 0.14380090959424124
+      },
+      {
+        "epoch": 2,
+        "valid_pinball_log": 0.14926644387765806
+      },
+      {
+        "epoch": 3,
+        "valid_pinball_log": 0.13544505759426845
+      },
+      {
+        "epoch": 4,
+        "valid_pinball_log": 0.13628727205489108
+      },
+      {
+        "epoch": 5,
+        "valid_pinball_log": 0.13738575982862009
+      },
+      {
+        "epoch": 6,
+        "valid_pinball_log": 0.13462277698889222
+      },
+      {
+        "epoch": 7,
+        "valid_pinball_log": 0.13729010166534236
+      },
+      {
+        "epoch": 8,
+        "valid_pinball_log": 0.131392402376903
+      },
+      {
+        "epoch": 9,
+        "valid_pinball_log": 0.12651708230236186
+      },
+      {
+        "epoch": 10,
+        "valid_pinball_log": 0.12639639985066314
+      },
+      {
+        "epoch": 11,
+        "valid_pinball_log": 0.12250045322284342
+      },
+      {
+        "epoch": 12,
+        "valid_pinball_log": 0.12279180441091489
+      },
+      {
+        "epoch": 13,
+        "valid_pinball_log": 0.1196163462946484
+      },
+      {
+        "epoch": 14,
+        "valid_pinball_log": 0.12179170669895249
+      },
+      {
+        "epoch": 15,
+        "valid_pinball_log": 0.12000037747897076
+      },
+      {
+        "epoch": 16,
+        "valid_pinball_log": 0.1200649940541388
+      }
+    ],
+    "GRU (2 h track) + tabular": [
+      {
+        "epoch": 0,
+        "valid_pinball_log": 0.1402407200075454
+      },
+      {
+        "epoch": 1,
+        "valid_pinball_log": 0.11383801276337345
+      },
+      {
+        "epoch": 2,
+        "valid_pinball_log": 0.1140533764318206
+      },
+      {
+        "epoch": 3,
+        "valid_pinball_log": 0.10994725903093891
+      },
+      {
+        "epoch": 4,
+        "valid_pinball_log": 0.10922753937394436
+      },
+      {
+        "epoch": 5,
+        "valid_pinball_log": 0.11204185579485063
+      },
+      {
+        "epoch": 6,
+        "valid_pinball_log": 0.11310959838167445
+      },
+      {
+        "epoch": 7,
+        "valid_pinball_log": 0.117231927658898
+      }
+    ],
+    "GRU + tabular, regularised": [
+      {
+        "epoch": 0,
+        "valid_pinball_log": 0.18647347075352286
+      },
+      {
+        "epoch": 1,
+        "valid_pinball_log": 0.13887352939177108
+      },
+      {
+        "epoch": 2,
+        "valid_pinball_log": 0.13175538380113483
+      },
+      {
+        "epoch": 3,
+        "valid_pinball_log": 0.12851944432837525
+      },
+      {
+        "epoch": 4,
+        "valid_pinball_log": 0.12719631352992836
+      },
+      {
+        "epoch": 5,
+        "valid_pinball_log": 0.13281762157019864
+      },
+      {
+        "epoch": 6,
+        "valid_pinball_log": 0.13321728869546506
+      },
+      {
+        "epoch": 7,
+        "valid_pinball_log": 0.13787371652807962
+      },
+      {
+        "epoch": 8,
+        "valid_pinball_log": 0.1347530745994282
+      }
+    ]
+  }
+}
