@@ -334,6 +334,8 @@ Reproduce: `uv run vessel-eta portwatch`, save the Port of LA PDF to `data/exter
 
 ## Does a sequence model help? (GRU for travel time)
 
+PyTorch is an optional extra: `uv sync --extra nn` (CI and the rest of the project don't need it).
+
 [`sequence.py`](src/vessel_eta/sequence.py), [`scripts/travel_models.py`](scripts/travel_models.py)
 → [`reports/travel_models.md`](reports/travel_models.md).
 

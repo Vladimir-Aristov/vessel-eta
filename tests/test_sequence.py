@@ -4,10 +4,10 @@ import numpy as np
 import polars as pl
 import pytest
 
-from vessel_eta.features import BASE_FEATURES
-from vessel_eta.sequence import STEP_COLS, SequenceTravelModel, step_table, window_index
+torch = pytest.importorskip("torch")  # optional extra: uv sync --extra nn
 
-torch = pytest.importorskip("torch")
+from vessel_eta.features import BASE_FEATURES  # noqa: E402
+from vessel_eta.sequence import STEP_COLS, SequenceTravelModel, step_table, window_index  # noqa: E402
 
 
 def test_window_stays_inside_voyage_and_looks_back_only():

@@ -1603,8 +1603,12 @@ dependencies = [
     { name = "rich" },
     { name = "scikit-learn" },
     { name = "shapely" },
-    { name = "torch" },
     { name = "typer" },
+]
+
+[package.optional-dependencies]
+nn = [
+    { name = "torch" },
 ]
 
 [package.dev-dependencies]
@@ -1625,9 +1629,10 @@ requires-dist = [
     { name = "rich", specifier = ">=15.0.0" },
     { name = "scikit-learn", specifier = ">=1.9.1" },
     { name = "shapely", specifier = ">=2.2.0" },
-    { name = "torch", specifier = ">=2.14.1" },
+    { name = "torch", marker = "extra == 'nn'", specifier = ">=2.14.1" },
     { name = "typer", specifier = ">=0.27.3" },
 ]
+provides-extras = ["nn"]
 
 [package.metadata.requires-dev]
 dev = [

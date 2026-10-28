@@ -15,12 +15,16 @@ dependencies = [
     "rich>=15.0.0",
     "scikit-learn>=1.9.1",
     "shapely>=2.2.0",
-    "torch>=2.14.1",
     "typer>=0.27.3",
 ]
 
 [project.scripts]
 vessel-eta = "vessel_eta.cli:app"
+
+[project.optional-dependencies]
+nn = [
+    "torch>=2.14.1",
+]
 
 [build-system]
 requires = ["uv_build>=0.11.3,<0.12.0"]
