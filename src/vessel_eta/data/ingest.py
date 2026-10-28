@@ -95,7 +95,9 @@ def _to_canonical(df: pl.DataFrame) -> pl.DataFrame:
             cols.append(pl.lit(None, dtype=dtype).alias(name))
         elif name == "ts" and df.schema[name] == pl.String:
             cols.append(
-                pl.col(name).str.to_datetime("%Y-%m-%dT%H:%M:%S", time_unit="ms", time_zone="UTC")
+                pl.col(name).str.to_datetime(
+                    "%Y-%m-%dT%H:%M:%S", time_unit="ms", time_zone="UTC", strict=False
+                )  # shifted rows -> null -> dropped as bad_timestamp
             )
         elif name == "ts":
             cols.append(pl.col(name).cast(pl.Datetime("ms")).dt.replace_time_zone("UTC"))
@@ -115,7 +117,7 @@ def _region_filter(bbox: BBox | None) -> pl.Expr:
     )
 
 
-def _iter_csv_blocks(path: Path) -> Iterator[pl.DataFrame]:
+def _iter_csv_blocks(path: Path, stats: IngestStats) -> Iterator[pl.DataFrame]:
     with zipfile.ZipFile(path) as zf:
         members = [m for m in zf.namelist() if m.lower().endswith(".csv")]
         if len(members) != 1:
@@ -124,9 +126,16 @@ def _iter_csv_blocks(path: Path) -> Iterator[pl.DataFrame]:
             # Read every column as string; casting happens once in _to_canonical.
             # (Type inference on the first block is unsafe: IMO/CallSign can look numeric.)
             header = fh.readline().decode().strip().split(",")
+
+            def skip_bad_row(row) -> str:
+                # e.g. 2023-04-07 has a row with an extra leading comma (18 fields, not 17)
+                stats.dropped["malformed_csv_row"] = stats.dropped.get("malformed_csv_row", 0) + 1
+                return "skip"
+
             reader = pacsv.open_csv(
                 fh,
                 read_options=pacsv.ReadOptions(column_names=header, block_size=CSV_BLOCK_BYTES),
+                parse_options=pacsv.ParseOptions(invalid_row_handler=skip_bad_row),
                 convert_options=pacsv.ConvertOptions(
                     column_types={c: pa.string() for c in header},
                     strings_can_be_null=True,
@@ -205,7 +214,7 @@ def read_raw(f: DailyFile, path: Path, bbox: BBox | None, stats: IngestStats) ->
         return _to_canonical(lf.filter(_region_filter(bbox)).collect())
 
     parts = []
-    for block in _iter_csv_blocks(path):
+    for block in _iter_csv_blocks(path, stats):
         stats.rows_raw += block.height
         block = _to_canonical(block)
         parts.append(block.filter(_region_filter(bbox)))

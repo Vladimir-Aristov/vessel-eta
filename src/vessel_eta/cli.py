@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import json
 import logging
@@ -23,7 +24,7 @@ from vessel_eta.config import (
     DataConfig,
     load_config,
 )
-from vessel_eta.data.download import Status, download
+from vessel_eta.data.download import Status, download, download_iter
 from vessel_eta.data.ingest import ingest_day, partition_exists
 from vessel_eta.data.sources import DailyFile, daily_file, date_range
 from vessel_eta.features import port_state
@@ -121,9 +122,10 @@ def fetch_cmd(
     raw_dir: Path = RAW_DIR,
     out_dir: Path = INTERIM_DIR,
 ) -> None:
-    """Download + ingest in batches, deleting raw files unless keep_raw is set.
+    """Download + ingest as a pipeline, deleting raw files unless keep_raw is set.
 
-    Peak disk use is about `concurrency` raw days (~300 MB each), not the whole range.
+    Each day is ingested as soon as its file arrives while the other downloads keep
+    going, so peak disk use is about `concurrency` raw days (~300 MB each).
     """
     cfg = load_config(config)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -131,19 +133,28 @@ def fetch_cmd(
     log.info(
         "%d days to fetch (%d already ingested)", len(todo), len(_days(cfg, start, end)) - len(todo)
     )
-    failed = 0
-    for i in range(0, len(todo), concurrency):
-        batch = todo[i : i + concurrency]
-        for r in download(batch, raw_dir, concurrency=concurrency):
+
+    async def pipeline() -> int:
+        failed = 0
+        async for r in download_iter(todo, raw_dir, concurrency=concurrency):
             if r.status is Status.FAILED:
                 failed += 1
                 log.error("%s: download failed: %s", r.file.day, r.error)
-            elif r.status is Status.MISSING:
+                continue
+            if r.status is Status.MISSING:
                 log.warning("%s: not published on the server", r.file.day)
-            else:
-                _ingest_and_log(r.file, r.path, out_dir, cfg)
-                if not cfg.keep_raw:
-                    r.path.unlink()
+                continue
+            try:  # CPU-bound: run off the event loop so downloads keep streaming
+                await asyncio.to_thread(_ingest_and_log, r.file, r.path, out_dir, cfg)
+            except Exception:  # one bad file must not stop the whole range
+                failed += 1
+                log.exception("%s: ingest failed, raw file kept for inspection", r.file.day)
+                continue
+            if not cfg.keep_raw:
+                r.path.unlink()
+        return failed
+
+    failed = asyncio.run(pipeline())
     if failed:
         log.error("%d days failed; rerun the same command to retry them", failed)
         raise typer.Exit(1)
@@ -205,15 +216,17 @@ def train_cmd(
     version: Annotated[
         str, typer.Option(help="v1: single regressor; v2: decomposed + quantiles")
     ] = "v1",
+    features: Annotated[str, typer.Option(help="v2 only: base | queue | all")] = "base",
+    name: Annotated[str | None, typer.Option(help="report name (default eta_<version>)")] = None,
     port_config: Annotated[Path, typer.Option("--port", help="Port YAML")] = DEFAULT_PORT_CONFIG,
 ) -> None:
-    """Baselines + model; writes reports/eta_<version>.md|json."""
+    """Baselines + model; writes reports/<name>.md|json."""
     from vessel_eta.experiment import REPORTS_DIR, run, run_v2  # lightgbm import is slow-ish
 
-    name = f"eta_{version}"
+    name = name or f"eta_{version}"
     start = test_start.replace(tzinfo=dt.UTC)
     if version == "v2":
-        res = run_v2(load_port(port_config), start, name)
+        res = run_v2(load_port(port_config), start, name, features)
         console.print(Path(REPORTS_DIR / f"{name}.md").read_text())
         return
     res = run(load_port(port_config), start, name)
@@ -227,6 +240,22 @@ def train_cmd(
         )
     console.print(t)
     console.print(f"full report: {REPORTS_DIR / (name + '.md')}")
+
+
+@app.command("portwatch")
+def portwatch_cmd(
+    config: ConfigOpt = DEFAULT_CONFIG,
+    start: StartOpt = None,
+    end: EndOpt = None,
+) -> None:
+    """Download IMF PortWatch daily data for LA/Long Beach (range + 30 days before it)."""
+    from vessel_eta.data import portwatch
+
+    cfg = load_config(config)
+    s = (start.date() if start else cfg.start) - dt.timedelta(days=30)  # room for the lag
+    e = end.date() if end else cfg.end
+    daily = portwatch.load(portwatch.fetch(s, e))
+    log.info("PortWatch: %d days, %s .. %s", daily.height, daily["day"].min(), daily["day"].max())
 
 
 @app.command("report")

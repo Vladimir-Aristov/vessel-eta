@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -152,6 +153,35 @@ async def download_async(
             with progress:
                 return await asyncio.gather(*coros)
         return await asyncio.gather(*coros)
+
+
+async def download_iter(
+    files: list[DailyFile],
+    out_dir: Path,
+    concurrency: int = 4,
+    retries: int = 4,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> AsyncIterator[Result]:
+    """Yield results as soon as each file is done, keeping `concurrency` downloads busy.
+
+    Unlike batches, one slow file does not hold up the others.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    sem = asyncio.Semaphore(concurrency)
+    timeout = httpx.Timeout(30.0, read=120.0)
+    async with httpx.AsyncClient(
+        timeout=timeout, follow_redirects=True, transport=transport
+    ) as client:
+        tasks = [
+            asyncio.create_task(_fetch_with_retries(client, f, out_dir, sem, None, retries))
+            for f in files
+        ]
+        try:
+            for done in asyncio.as_completed(tasks):
+                yield await done
+        finally:
+            for t in tasks:
+                t.cancel()
 
 
 def download(files: list[DailyFile], out_dir: Path, **kwargs) -> list[Result]:

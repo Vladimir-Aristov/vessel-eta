@@ -125,15 +125,13 @@ def add_targets(feats: pl.DataFrame, episodes: pl.DataFrame) -> pl.DataFrame:
 # ------------------------------------------------------------------ models
 
 
-def _x(df: pl.DataFrame) -> np.ndarray:
-    return df.select(pl.col(FEATURES).cast(pl.Float64)).to_numpy()
+def _x(df: pl.DataFrame, features: list[str]) -> np.ndarray:
+    return df.select(pl.col(features).cast(pl.Float64)).to_numpy()
 
 
-_CAT = [FEATURES.index(c) for c in CATEGORICAL]
-
-
-def _train(params, xtr, ytr, xva, yva) -> lgb.Booster:
-    dtr = lgb.Dataset(xtr, ytr, feature_name=FEATURES, categorical_feature=_CAT)
+def _train(params, features, xtr, ytr, xva, yva) -> lgb.Booster:
+    cat = [features.index(c) for c in CATEGORICAL if c in features]
+    dtr = lgb.Dataset(xtr, ytr, feature_name=features, categorical_feature=cat)
     dva = lgb.Dataset(xva, yva, reference=dtr)
     return lgb.train(
         params, dtr, num_boost_round=MAX_ROUNDS, valid_sets=[dva],
@@ -146,10 +144,13 @@ class QuantileModel:
     """One LightGBM per quantile on log1p(minutes); predictions sorted (no crossing)."""
 
     boosters: list[lgb.Booster]
+    features: list[str]
 
     @classmethod
-    def fit(cls, train: pl.DataFrame, valid: pl.DataFrame, target: str) -> QuantileModel:
-        xtr, xva = _x(train), _x(valid)
+    def fit(
+        cls, train: pl.DataFrame, valid: pl.DataFrame, target: str, features: list[str]
+    ) -> QuantileModel:
+        xtr, xva = _x(train, features), _x(valid, features)
         ytr = np.log1p(train[target].to_numpy().astype(np.float64))
         yva = np.log1p(valid[target].to_numpy().astype(np.float64))
         boosters = []
@@ -160,11 +161,11 @@ class QuantileModel:
                 "alpha": float(q),
                 "metric": "quantile",
             }
-            boosters.append(_train(params, xtr, ytr, xva, yva))
-        return cls(boosters)
+            boosters.append(_train(params, features, xtr, ytr, xva, yva))
+        return cls(boosters, features)
 
     def predict_log(self, df: pl.DataFrame) -> np.ndarray:
-        x = _x(df)
+        x = _x(df, self.features)
         p = np.stack([b.predict(x, num_iteration=b.best_iteration) for b in self.boosters], axis=1)
         return np.sort(p, axis=1)
 
@@ -172,15 +173,18 @@ class QuantileModel:
 @dataclass
 class StopClassifier:
     booster: lgb.Booster
+    features: list[str]
 
     @classmethod
-    def fit(cls, train: pl.DataFrame, valid: pl.DataFrame) -> StopClassifier:
+    def fit(cls, train: pl.DataFrame, valid: pl.DataFrame, features: list[str]) -> StopClassifier:
         params = {**LGB_PARAMS, "objective": "binary", "metric": "binary_logloss"}
         y = lambda d: d["stop_next"].cast(pl.Int8).to_numpy()  # noqa: E731
-        return cls(_train(params, _x(train), y(train), _x(valid), y(valid)))
+        xtr, xva = _x(train, features), _x(valid, features)
+        return cls(_train(params, features, xtr, y(train), xva, y(valid)), features)
 
     def predict(self, df: pl.DataFrame) -> np.ndarray:
-        return self.booster.predict(_x(df), num_iteration=self.booster.best_iteration)
+        x = _x(df, self.features)
+        return self.booster.predict(x, num_iteration=self.booster.best_iteration)
 
 
 # ------------------------------------------------------------------ composition
@@ -226,15 +230,17 @@ class DecomposedETA:
     )
 
     @classmethod
-    def fit(cls, train: pl.DataFrame, valid: pl.DataFrame) -> DecomposedETA:
+    def fit(
+        cls, train: pl.DataFrame, valid: pl.DataFrame, features: list[str] = FEATURES
+    ) -> DecomposedETA:
         mv_tr, mv_va = train.filter(~pl.col("waiting_now")), valid.filter(~pl.col("waiting_now"))
         st_tr, st_va = mv_tr.filter("stop_next"), mv_va.filter("stop_next")
         wt_tr, wt_va = train.filter("waiting_now"), valid.filter("waiting_now")
         return cls(
-            stop=StopClassifier.fit(mv_tr, mv_va),
-            travel=QuantileModel.fit(mv_tr, mv_va, "t_next_min"),
-            after_stop=QuantileModel.fit(st_tr, st_va, "after_stop_min"),
-            waiting=QuantileModel.fit(wt_tr, wt_va, "eta_min"),
+            stop=StopClassifier.fit(mv_tr, mv_va, features),
+            travel=QuantileModel.fit(mv_tr, mv_va, "t_next_min", features),
+            after_stop=QuantileModel.fit(st_tr, st_va, "after_stop_min", features),
+            waiting=QuantileModel.fit(wt_tr, wt_va, "eta_min", features),
         )
 
     def calibrate(self, calib: pl.DataFrame) -> DecomposedETA:

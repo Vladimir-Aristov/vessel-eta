@@ -10,7 +10,8 @@ import numpy as np
 import polars as pl
 
 from vessel_eta.config import PROCESSED_DIR, ROOT
-from vessel_eta.features import build_features
+from vessel_eta.data import pola, portwatch
+from vessel_eta.features import FEATURE_SETS, build_features
 from vessel_eta.geo import Port
 from vessel_eta.modeling import (
     SLICES,
@@ -28,10 +29,14 @@ PRED_COLS = ["pred_median", "pred_naive", "pred_calibrated", "pred_lgbm"]
 
 
 def load_features(port: Port, processed: Path = PROCESSED_DIR) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Feature table (with PortWatch if downloaded) and labelled voyages."""
     voyages = pl.read_parquet(processed / f"voyages_{port.name}.parquet").filter("labelled")
     points = pl.read_parquet(processed / f"eta_points_{port.name}.parquet")
     state = pl.read_parquet(processed / f"port_state_{port.name}.parquet")
-    return build_features(points, voyages, state, port), voyages
+    feats = build_features(
+        points, voyages, state, port, portwatch=portwatch.load(), pola_daily=pola.load()
+    )
+    return feats, voyages
 
 
 def _cell(v) -> str:
@@ -150,7 +155,12 @@ def residual_intervals(train: pl.DataFrame, df: pl.DataFrame, pred: str) -> pl.D
     return pl.concat(out)
 
 
-def run_v2(port: Port, test_start: dt.datetime, name: str = "eta_v2") -> dict:
+def run_v2(
+    port: Port, test_start: dt.datetime, name: str = "eta_v2", feature_set: str = "base"
+) -> dict:
+    """feature_set: "base" (v2 as first built), "queue" (+ smoothed AIS queue and
+    PortWatch) or "all" (+ Port of Los Angeles daily summary)."""
+    features = FEATURE_SETS[feature_set]
     from sklearn.metrics import brier_score_loss, roc_auc_score
 
     from vessel_eta.decompose import DecomposedETA, add_targets, waiting_episodes
@@ -161,7 +171,7 @@ def run_v2(port: Port, test_start: dt.datetime, name: str = "eta_v2") -> dict:
     split = make_split(feats, voyages, test_start)
 
     v1 = fit_lgbm(split.train, split.valid)
-    v2 = DecomposedETA.fit(split.train, split.valid)
+    v2 = DecomposedETA.fit(split.train, split.valid, features)
     v2_raw_widen = dict(v2.widen)
     raw = v2.predict(split.test).select(
         raw_p10="eta_p10", raw_p50="eta_p50", raw_p90="eta_p90"
@@ -230,6 +240,7 @@ def run_v2(port: Port, test_start: dt.datetime, name: str = "eta_v2") -> dict:
     result = {
         "name": name,
         "test_start": test_start.isoformat(),
+        "feature_set": feature_set,
         "test_voyages": test["voyage_id"].n_unique(),
         "point": point_table(test).to_dicts(),
         "point_unseen_ships": point_table(unseen).to_dicts(),
@@ -247,8 +258,9 @@ def run_v2(port: Port, test_start: dt.datetime, name: str = "eta_v2") -> dict:
     (REPORTS_DIR / f"{name}.json").write_text(json.dumps(result, indent=2, default=str))
     keep = ["model", "mae_h", "median_ae_h", "voyage_mae_h", "median_bias_h"]
     md = [
-        f"# {name}: decomposed probabilistic ETA (same split as eta_v1)",
-        f"Test: arrivals from {test_start:%Y-%m-%d}, {result['test_voyages']} voyages. Hours.",
+        f"# {name}: decomposed probabilistic ETA, features: {feature_set}",
+        f"Train: arrivals before {test_start:%Y-%m-%d}; test: from {test_start:%Y-%m-%d}, "
+        f"{result['test_voyages']} voyages. Hours. v1 is retrained on the same split.",
         "## Point forecast (v2 = median of the predicted distribution)",
         _table(point_table(test).select(keep)),
         "## Ships never seen in training", _table(point_table(unseen).select(keep)),

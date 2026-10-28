@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from vessel_eta.data import download as dl
-from vessel_eta.data.download import Status, download_async
+from vessel_eta.data.download import Status, download_async, download_iter
 from vessel_eta.data.sources import daily_file
 
 PAYLOAD = bytes(range(256)) * 4000  # ~1 MB
@@ -95,3 +95,21 @@ def test_does_not_retry_client_errors(tmp_path):
     [res] = run([F1], tmp_path, server, retries=3)
     assert res.status is Status.FAILED
     assert server.fail_left == 0 and server.range_headers == []
+
+
+def test_download_iter_yields_each_file_once(tmp_path):
+    files = [daily_file(dt.date(2023, 1, d)) for d in range(1, 6)]
+    server = FakeServer([f.url for f in files[:4]])  # day 5 is missing on the server
+
+    async def collect():
+        out = []
+        async for r in download_iter(
+            files, tmp_path, concurrency=2, transport=httpx.MockTransport(server)
+        ):
+            out.append(r)
+        return out
+
+    res = asyncio.run(collect())
+    assert sorted(r.file.day for r in res) == [f.day for f in files]
+    assert [r.status for r in res].count(Status.DOWNLOADED) == 4
+    assert [r.status for r in res].count(Status.MISSING) == 1

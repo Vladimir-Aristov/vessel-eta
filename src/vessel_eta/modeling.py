@@ -27,7 +27,7 @@ import numpy as np
 import polars as pl
 from sklearn.linear_model import LinearRegression
 
-from vessel_eta.features import CATEGORICAL, FEATURES
+from vessel_eta.features import BASE_FEATURES, CATEGORICAL
 
 SLICES = {
     "moving, < 30 km from gate": (pl.col("sog") >= 5) & (pl.col("gate_km") < 30),
@@ -169,9 +169,6 @@ EARLY_STOPPING = 150
 MAX_ROUNDS = 6000
 
 
-CAT_IDX = [FEATURES.index(c) for c in CATEGORICAL]
-
-
 def _x(df: pl.DataFrame, features: list[str]) -> np.ndarray:
     # categorical codes (AIS type, nav status) are small non-negative ints; LightGBM uses them as-is
     return df.select(pl.col(features).cast(pl.Float64)).to_numpy()
@@ -195,7 +192,7 @@ class Fitted:
 def fit_lgbm(
     train: pl.DataFrame,
     valid: pl.DataFrame,
-    features: list[str] = FEATURES,
+    features: list[str] = BASE_FEATURES,  # v1 feature set
     params: dict | None = None,
 ) -> Fitted:
     """Train on `train`, early-stop on `valid` (held-out ships)."""
@@ -214,7 +211,7 @@ def fit_lgbm(
 
 def grouped_cv(
     df: pl.DataFrame,
-    features: list[str] = FEATURES,
+    features: list[str] = BASE_FEATURES,  # v1 feature set
     params: dict | None = None,
     n_splits: int = 5,
     seed: int = 0,

@@ -110,3 +110,20 @@ def test_geoparquet_ingest_decodes_points(tmp_path):
 def test_no_bbox_keeps_everything(csv_zip, tmp_path):
     stats = ingest_day(daily_file(dt.date(2023, 1, 1)), csv_zip, tmp_path / "out", None)
     assert stats.rows_in_region == 6
+
+
+def test_malformed_csv_rows_are_dropped_not_fatal(tmp_path):
+    path = tmp_path / "AIS_2023_04_07.zip"
+    # 17 fields but shifted one column right: parses, timestamp column holds the MMSI
+    shifted = (
+        ",369990247,2023-04-07T00:02:24,33.70,-118.20,0.0,240.7,334.0,NAME,,CG29247,90,48,,,,51"
+    )
+    extra = shifted + ",A"  # 18 fields: rejected by the parser (the real 2023-04-07 case)
+    assert len(shifted.split(",")) == 17 and len(extra.split(",")) == 18
+    rows = [CSV_HEADER, CSV_ROWS[0], extra, shifted, CSV_ROWS[5]]
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("AIS_2023_04_07.csv", "\n".join(rows) + "\n")
+    stats = ingest_day(daily_file(dt.date(2023, 4, 7)), path, tmp_path / "out", None)
+    assert stats.dropped["malformed_csv_row"] == 1
+    assert stats.rows_raw == 3
+    assert stats.rows_out == 2  # the shifted row is dropped by the normal rules

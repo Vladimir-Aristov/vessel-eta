@@ -13,7 +13,7 @@ import polars as pl
 
 from vessel_eta.config import ROOT
 from vessel_eta.experiment import _table, load_features
-from vessel_eta.features import FEATURES
+from vessel_eta.features import BASE_FEATURES as FEATURES  # the v1 study
 from vessel_eta.geo import load_port
 from vessel_eta.modeling import SLICES, CalibratedNaive, grouped_cv
 
