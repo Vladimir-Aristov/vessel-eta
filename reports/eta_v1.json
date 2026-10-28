@@ -1,0 +1,307 @@
+{
+  "name": "eta_v1",
+  "test_start": "2023-03-01T00:00:00+00:00",
+  "sizes": {
+    "train": {
+      "rows": 175822,
+      "voyages": 463,
+      "ships": 352
+    },
+    "valid": {
+      "rows": 54220,
+      "voyages": 107,
+      "ships": 87
+    },
+    "test": {
+      "rows": 151983,
+      "voyages": 310,
+      "ships": 260
+    }
+  },
+  "best_iteration": 50,
+  "test": [
+    {
+      "model": "median",
+      "mae_h": 103.8841968157515,
+      "median_ae_h": 26.048055013020832,
+      "voyage_mae_h": 27.143061201638805,
+      "median_bias_h": -18.5125,
+      "n_points": 151983,
+      "n_voyages": 310
+    },
+    {
+      "model": "naive",
+      "mae_h": 97.1231497833731,
+      "median_ae_h": 33.77929941813151,
+      "voyage_mae_h": 16.080831550239704,
+      "median_bias_h": -27.971207682291666,
+      "n_points": 151983,
+      "n_voyages": 310
+    },
+    {
+      "model": "calibrated",
+      "mae_h": 93.29019434336828,
+      "median_ae_h": 34.27730941772461,
+      "voyage_mae_h": 19.655283529816135,
+      "median_bias_h": -0.5573583245277405,
+      "n_points": 151983,
+      "n_voyages": 310
+    },
+    {
+      "model": "lgbm",
+      "mae_h": 99.44816246303932,
+      "median_ae_h": 27.7924249373155,
+      "voyage_mae_h": 15.977410910919764,
+      "median_bias_h": -13.091158072774688,
+      "n_points": 151983,
+      "n_voyages": 310
+    }
+  ],
+  "test_seen_ships": [
+    {
+      "model": "median",
+      "mae_h": 43.54609193586527,
+      "median_ae_h": 22.281390380859374,
+      "voyage_mae_h": 22.933506547881034,
+      "median_bias_h": 1.9400004069010417,
+      "n_points": 49425,
+      "n_voyages": 140
+    },
+    {
+      "model": "naive",
+      "mae_h": 42.473558679034525,
+      "median_ae_h": 17.46340815226237,
+      "voyage_mae_h": 11.142724082707236,
+      "median_bias_h": -10.302306111653646,
+      "n_points": 49425,
+      "n_voyages": 140
+    },
+    {
+      "model": "calibrated",
+      "mae_h": 40.33543630398431,
+      "median_ae_h": 22.089082717895508,
+      "voyage_mae_h": 17.064361859006542,
+      "median_bias_h": 4.568355560302734,
+      "n_points": 49425,
+      "n_voyages": 140
+    },
+    {
+      "model": "lgbm",
+      "mae_h": 39.22396451985349,
+      "median_ae_h": 15.416482431909625,
+      "voyage_mae_h": 11.594428071080902,
+      "median_bias_h": 0.832051597504568,
+      "n_points": 49425,
+      "n_voyages": 140
+    }
+  ],
+  "test_unseen_ships": [
+    {
+      "model": "median",
+      "mae_h": 132.96248260221748,
+      "median_ae_h": 38.637638346354166,
+      "voyage_mae_h": 30.609753269439313,
+      "median_bias_h": -38.637638346354166,
+      "n_points": 102558,
+      "n_voyages": 170
+    },
+    {
+      "model": "naive",
+      "mae_h": 123.46001321998392,
+      "median_ae_h": 48.911795425415036,
+      "voyage_mae_h": 20.147508288207618,
+      "median_bias_h": -43.35137360890707,
+      "n_points": 102558,
+      "n_voyages": 170
+    },
+    {
+      "model": "calibrated",
+      "mae_h": 118.81027972038962,
+      "median_ae_h": 41.91271209716797,
+      "voyage_mae_h": 21.788983729306388,
+      "median_bias_h": -14.914409637451172,
+      "n_points": 102558,
+      "n_voyages": 170
+    },
+    {
+      "model": "lgbm",
+      "mae_h": 128.47155394241645,
+      "median_ae_h": 40.181153811660266,
+      "voyage_mae_h": 19.58692619078706,
+      "median_bias_h": -31.18046371041123,
+      "n_points": 102558,
+      "n_voyages": 170
+    }
+  ],
+  "slices": [
+    {
+      "slice": "moving, < 30 km from gate",
+      "n": 9219,
+      "median_true_eta_h": 1.6163888295491537,
+      "pred_median": 30.04515437453809,
+      "pred_naive": 12.548836620086425,
+      "pred_calibrated": 13.636984007380171,
+      "pred_lgbm": 11.919909158012167
+    },
+    {
+      "slice": "moving, >= 30 km",
+      "n": 38134,
+      "median_true_eta_h": 11.577362060546875,
+      "pred_median": 34.75756168657244,
+      "pred_naive": 28.75949074446293,
+      "pred_calibrated": 28.71374629605262,
+      "pred_lgbm": 26.765528912547868
+    },
+    {
+      "slice": "slow (0.5-5 kn)",
+      "n": 26772,
+      "median_true_eta_h": 94.24861653645833,
+      "pred_median": 87.44133913479797,
+      "pred_naive": 75.12832938977607,
+      "pred_calibrated": 74.58009345027217,
+      "pred_lgbm": 85.73095638311877
+    },
+    {
+      "slice": "stationary (< 0.5 kn)",
+      "n": 77858,
+      "median_true_eta_h": 75.0509765625,
+      "pred_median": 152.13878108604038,
+      "pred_naive": 148.18425716372602,
+      "pred_calibrated": 140.78419671992276,
+      "pred_lgbm": 150.12811257998453
+    }
+  ],
+  "true_horizon_diagnostic": [
+    {
+      "slice": "0-2 h",
+      "n": 7016,
+      "median_true_eta_h": 0.9972222010294597,
+      "pred_median": 26.359182869854227,
+      "pred_naive": 0.46532389076036546,
+      "pred_calibrated": 9.098877774443192,
+      "pred_lgbm": 5.721100436438596
+    },
+    {
+      "slice": "2-6 h",
+      "n": 13627,
+      "median_true_eta_h": 3.9605555216471355,
+      "pred_median": 23.38246462465438,
+      "pred_naive": 2.6483471387337665,
+      "pred_calibrated": 18.375935144141675,
+      "pred_lgbm": 11.313738425655764
+    },
+    {
+      "slice": "6-12 h",
+      "n": 18276,
+      "median_true_eta_h": 8.775417073567708,
+      "pred_median": 18.5028128448562,
+      "pred_naive": 4.8444813240976385,
+      "pred_calibrated": 18.681821246310175,
+      "pred_lgbm": 11.559346307415552
+    },
+    {
+      "slice": "12-24 h",
+      "n": 19062,
+      "median_true_eta_h": 16.238888549804688,
+      "pred_median": 10.51778624777453,
+      "pred_naive": 14.584264486710639,
+      "pred_calibrated": 25.513872865339593,
+      "pred_lgbm": 12.492295840338308
+    },
+    {
+      "slice": "24-72 h",
+      "n": 32996,
+      "median_true_eta_h": 43.573055013020834,
+      "pred_median": 18.198521921792384,
+      "pred_naive": 34.97177255044186,
+      "pred_calibrated": 20.365813318643564,
+      "pred_lgbm": 22.753567788821798
+    },
+    {
+      "slice": "> 72 h",
+      "n": 61006,
+      "median_true_eta_h": 165.97278645833333,
+      "pred_median": 231.87780109914053,
+      "pred_naive": 216.39252429679087,
+      "pred_calibrated": 202.67698630126216,
+      "pred_lgbm": 224.89517493769168
+    }
+  ],
+  "importance": [
+    {
+      "feature": "closing_kmh_1h",
+      "gain": 615590.2784729004,
+      "share": 0.21907071044396642
+    },
+    {
+      "feature": "sog",
+      "gain": 503683.35556030273,
+      "share": 0.17924628506987372
+    },
+    {
+      "feature": "draft",
+      "gain": 397985.4514770508,
+      "share": 0.14163146925862052
+    },
+    {
+      "feature": "naive_eta_min",
+      "gain": 277182.6885070801,
+      "share": 0.09864127264103281
+    },
+    {
+      "feature": "status",
+      "gain": 201161.9708251953,
+      "share": 0.07158770598571754
+    },
+    {
+      "feature": "angels_km",
+      "gain": 122966.13876342773,
+      "share": 0.04376007926291733
+    },
+    {
+      "feature": "width",
+      "gain": 101434.82318115234,
+      "share": 0.036097709069054754
+    },
+    {
+      "feature": "naive_eta_2h_min",
+      "gain": 93124.10479736328,
+      "share": 0.03314016564398172
+    },
+    {
+      "feature": "min_since_start",
+      "gain": 78903.04678344727,
+      "share": 0.02807930391286101
+    },
+    {
+      "feature": "length",
+      "gain": 74185.78216552734,
+      "share": 0.02640056637047567
+    },
+    {
+      "feature": "stationary_min_total",
+      "gain": 66356.05072021484,
+      "share": 0.023614192234475435
+    },
+    {
+      "feature": "align",
+      "gain": 63100.68826293945,
+      "share": 0.02245570323423153
+    },
+    {
+      "feature": "lat",
+      "gain": 53816.30859375,
+      "share": 0.019151662021614512
+    },
+    {
+      "feature": "min_since_moving",
+      "gain": 45122.23178100586,
+      "share": 0.016057692459997858
+    },
+    {
+      "feature": "lon",
+      "gain": 32664.47625732422,
+      "share": 0.011624338899119091
+    }
+  ]
+}

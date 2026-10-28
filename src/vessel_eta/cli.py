@@ -26,6 +26,7 @@ from vessel_eta.config import (
 from vessel_eta.data.download import Status, download
 from vessel_eta.data.ingest import ingest_day, partition_exists
 from vessel_eta.data.sources import DailyFile, daily_file, date_range
+from vessel_eta.features import port_state
 from vessel_eta.geo import DEFAULT_PORT_CONFIG, load_port
 from vessel_eta.tracks import clean_tracks
 from vessel_eta.voyages import build_voyages, summarize
@@ -177,11 +178,13 @@ def labels_cmd(
         f"{tstats.points_dropped_ghosts:,}",
     )
     voyages, labels = build_voyages(tracks, port)
+    state = port_state(tracks, port)
     summary = {"port": port.name, "tracks": asdict(tstats), **summarize(voyages, labels)}
 
     out_dir.mkdir(parents=True, exist_ok=True)
     voyages.write_parquet(out_dir / f"voyages_{port.name}.parquet")
     labels.write_parquet(out_dir / f"eta_points_{port.name}.parquet", compression="zstd")
+    state.write_parquet(out_dir / f"port_state_{port.name}.parquet")
     (out_dir / f"labels_{port.name}.json").write_text(json.dumps(summary, indent=2, default=str))
 
     t = Table(title=f"ETA labels: {port.name}")
@@ -191,6 +194,31 @@ def labels_cmd(
         if k not in ("port", "tracks"):
             t.add_row(k, f"{v:,.1f}" if isinstance(v, float) else f"{v:,}")
     console.print(t)
+
+
+@app.command("train")
+def train_cmd(
+    test_start: Annotated[
+        dt.datetime,
+        typer.Option(formats=["%Y-%m-%d"], help="Arrivals from this day are the test set"),
+    ] = dt.datetime(2023, 3, 1),
+    name: str = "eta_v1",
+    port_config: Annotated[Path, typer.Option("--port", help="Port YAML")] = DEFAULT_PORT_CONFIG,
+) -> None:
+    """Baselines + LightGBM; writes reports/<name>.md|json and models/<name>.txt."""
+    from vessel_eta.experiment import REPORTS_DIR, run  # lightgbm import is slow-ish
+
+    res = run(load_port(port_config), test_start.replace(tzinfo=dt.UTC), name)
+    t = Table(title=f"{name}: test ({res['sizes']['test']['voyages']} voyages), hours")
+    for c in ("model", "mae_h", "median_ae_h", "voyage_mae_h", "median_bias_h"):
+        t.add_column(c, justify="right")
+    for r in res["test"]:
+        t.add_row(
+            r["model"],
+            *(f"{r[c]:.1f}" for c in ("mae_h", "median_ae_h", "voyage_mae_h", "median_bias_h")),
+        )
+    console.print(t)
+    console.print(f"full report: {REPORTS_DIR / (name + '.md')}")
 
 
 @app.command("report")

@@ -3,8 +3,10 @@
 Predicting when a ship will arrive at port, and spotting ships that behave strangely,
 from raw AIS transponder data published by NOAA.
 
-> **Status:** data pipeline and ETA labels done (Jan–Mar 2023: 880 arrivals, 1.13M labelled
-> points). Baselines are next — see [Roadmap](#roadmap).
+> **Status:** data pipeline, ETA labels and a first model done (Jan–Mar 2023: 880 arrivals,
+> 1.13M labelled points). Headline: on moving ships the model beats physics by ~5–7%; the
+> error is dominated by *anchorage waiting*, which AIS alone barely predicts — see
+> [First model](#first-model-and-what-it-tells-us).
 
 ![Labelled approaches to LA / Long Beach](docs/img/approaches_map.png)
 
@@ -146,6 +148,66 @@ speed, on underway points (SOG > 5 kn) within 24 h of arrival (445k points):
 **MAE 151 min**, and it is biased — the median prediction is 92 min too early (ships slow down for the pilot
 and follow the traffic lanes, not a straight line).
 
+## First model and what it tells us
+
+`uv run vessel-eta train` → [`reports/eta_v1.md`](reports/eta_v1.md).
+
+**Features** ([`features.py`](src/vessel_eta/features.py)): distance and bearing to the
+gates, speed/course now and over the last 30 min–6 h, closing speed over the last hour,
+time spent stationary so far, ship size/draft, hour and weekday, and port-wide counts
+(ships waiting at anchor, inbound, in port) from the previous 30 minutes. Every feature
+uses only data up to the prediction time; `tests/test_features.py` truncates tracks at 71
+cut-offs and checks nothing changes. Two deliberate leaks (time measured from the
+voyage's *end*; port state from the *current* half hour) were planted to make sure the
+test catches them — the second was only caught after the cut-offs were made dense.
+
+**Validation**: train on arrivals in Jan–Feb, test on March; early stopping on 20% of
+*ships* held out from training; configuration chosen by 5-fold CV grouped by ship on
+Jan–Feb ([`reports/cv_ablation.md`](reports/cv_ablation.md)); March scored once. One row
+per 5 minutes per voyage (neighbouring minutes are near-duplicates, and the effective
+sample is ~500 voyages, not 200k rows — hence small, heavily regularised trees).
+
+**Test, March 2023** — 310 voyages; absolute error in hours:
+
+| model | point MAE | median AE | voyage MAE | median bias |
+|---|---|---|---|---|
+| constant median | 103.9 | 26.0 | 27.1 | -18.5 |
+| distance / speed | 97.1 | 33.8 | 16.1 | -28.0 |
+| calibrated distance / speed | 93.3 | 34.3 | 19.7 | -0.6 |
+| LightGBM | 99.4 | 27.8 | 16.0 | -13.1 |
+
+By what you can see when predicting (MAE, hours):
+
+| ship state | rows | median true ETA | distance / speed | calibrated | LightGBM |
+|---|---|---|---|---|---|
+| moving, < 30 km from gate | 9,219 | 1.6 | 12.5 | 13.6 | **11.9** |
+| moving, ≥ 30 km | 38,134 | 11.6 | 28.8 | 28.7 | **26.8** |
+| slow (0.5–5 kn) | 26,772 | 94.2 | 75.1 | **74.6** | 85.7 |
+| stationary | 77,858 | 75.1 | 148.2 | **140.8** | 150.1 |
+
+What this says:
+
+1. **The model does not beat simple physics overall.** It wins on moving ships (5–7%),
+   loses to a two-parameter calibration on ships that are slow or at anchor, and ties
+   distance/speed per voyage. CV on Jan–Feb tells the same story, so this is not bad luck
+   with March.
+2. **The error is the queue, not the voyage.** Even moving ships within 30 km of the gate,
+   whose median true ETA is 1.6 h, have a ~12 h MAE: some of them are heading for an
+   anchorage and will wait for days. Whether a ship goes straight to a berth is decided by
+   berth schedules that are not in AIS. "Distance/speed is off by only 0.5 h when the true
+   ETA is under 2 h" is a selection effect — that slice contains only ships that went
+   straight in (see the true-horizon table in the report).
+3. **Unseen ships are much harder** (voyage MAE 19.6 h vs 11.6 h for ships seen in
+   training), and all models under-predict them: March's new arrivals waited longer than
+   anything in Jan–Feb.
+4. Ship size and draft matter (removing them hurts in CV), and the strongest features are
+   the physical ones: closing speed, current speed, distance/speed.
+
+So the next model should not be a bigger regressor over the same mixture, but a
+decomposition: *travel time to the next stop* (predictable from motion) + *will it anchor
+first* (classifier) + *how long it waits* (survival-style, with port congestion), with
+quantile outputs so the answer can be "2 h if it goes in, 1–4 days if it queues".
+
 ## Quickstart
 
 ```bash
@@ -155,6 +217,8 @@ uv run vessel-eta fetch --start 2023-02-01 --end 2023-02-07
 uv run vessel-eta report                    # data quality summary
 uv run vessel-eta labels                    # tracks -> voyages -> ETA labels
 uv run python scripts/plot_labels.py        # README figures
+uv run python scripts/cv_ablation.py        # model selection (grouped CV, Jan-Feb)
+uv run vessel-eta train                     # baselines + LightGBM, March test -> reports/
 uv run pytest
 ```
 
@@ -164,10 +228,9 @@ NOAA's server is slow (~0.5–1 MB/s per connection); `--concurrency` helps.
 
 1. ~~**Data pipeline**~~ — download, normalise, clean, partition.
 2. ~~**Trajectories and labels**~~ — clean tracks, port geofence, arrivals, ETA labels.
-3. **Baselines** — gradient boosting on hand-made features against the distance/speed
-   baseline above; validation split by time *and* by vessel to avoid leakage.
-4. **Sequence model** — GRU / transformer over the recent track; quantile outputs for an
-   ETA interval, not just a point.
+3. ~~**Baselines**~~ — causal features, time + ship validation, LightGBM vs physics.
+4. **Decomposed ETA** — time to next stop + anchor-or-not + waiting time, quantile outputs;
+   then a sequence model (GRU / transformer) over the recent track for the travel part.
 5. **Anomalies** — AIS gaps, loitering, rendezvous; vessel-type classifier from motion only.
 6. **Serving** — FastAPI endpoint, Docker, a map demo, drift monitoring.
 
@@ -185,7 +248,12 @@ src/vessel_eta/
   geo.py                   distances, port geofence
   tracks.py                spikes / ghosts / replays -> one clean track per ship
   voyages.py               arrivals, approach segments, ETA labels
+  features.py              causal point features + port congestion
+  modeling.py              splits, baselines, metrics, LightGBM, grouped CV
+  experiment.py            `train`: end-to-end run -> reports/
 scripts/plot_labels.py     README figures
+scripts/cv_ablation.py     model selection table
+reports/                   eval reports (markdown + json)
 tests/                     offline tests (fake HTTP server, synthetic files and tracks)
 ```
 
