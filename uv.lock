@@ -2328,6 +2328,7 @@ dependencies = [
     { name = "lightgbm" },
     { name = "matplotlib" },
     { name = "polars" },
+    { name = "prometheus-client" },
     { name = "pyarrow" },
     { name = "pypdf" },
     { name = "pyyaml" },
@@ -2346,7 +2347,6 @@ nn = [
 [package.dev-dependencies]
 dev = [
     { name = "mypy" },
-    { name = "prometheus-client" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
@@ -2359,6 +2359,7 @@ requires-dist = [
     { name = "lightgbm", specifier = ">=4.7.0" },
     { name = "matplotlib", specifier = ">=3.11.2" },
     { name = "polars", specifier = ">=2.1.0" },
+    { name = "prometheus-client", specifier = ">=0.26.0" },
     { name = "pyarrow", specifier = ">=26.0.0" },
     { name = "pypdf", specifier = ">=6.21.3" },
     { name = "pyyaml", specifier = ">=6.0.3" },
@@ -2374,7 +2375,6 @@ provides-extras = ["nn"]
 [package.metadata.requires-dev]
 dev = [
     { name = "mypy", specifier = ">=2.4.0" },
-    { name = "prometheus-client", specifier = ">=0.26.0" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "ruff", specifier = ">=0.17.3" },

@@ -162,3 +162,13 @@ def test_teleport_into_port_is_treated_as_a_position_spike(client):
     # a jump of 30 km in a minute is not physical: cleaning drops it, the ship is still out
     r = client.post("/v1/eta", json=_request(approach(0, 30, 33.40) + stay(30, 5, 33.75)))
     assert r.status_code == 200 and r.json()["points_used"] == 30
+
+
+def test_metrics_count_requests_and_predictions(client):
+    client.post("/v1/eta", json=_request(approach(0, 90, 33.20)))
+    client.post("/v1/eta", json={"bad": "request"})
+    text = client.get("/metrics/").text
+    assert 'vessel_eta_requests_total{endpoint="/v1/eta",status="200"}' in text
+    assert 'vessel_eta_requests_total{endpoint="/v1/eta",status="422"}' in text
+    assert "vessel_eta_predicted_eta_hours_count" in text
+    assert 'vessel_eta_model_info{trained_until="",version="test"} 1.0' in text
