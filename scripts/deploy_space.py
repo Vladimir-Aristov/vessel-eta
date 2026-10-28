@@ -67,9 +67,16 @@ def main() -> None:
     if role == "read":
         fail("HF_TOKEN is read-only: create a token with Write access")
     try:
-        api.create_repo(SPACE, repo_type="space", space_sdk="docker", exist_ok=True)
+        if not api.repo_exists(SPACE, repo_type="space"):  # creating may be refused (402)
+            api.create_repo(SPACE, repo_type="space", space_sdk="docker")
     except Exception as e:  # noqa: BLE001
-        fail(f"could not create {SPACE}: {type(e).__name__}: {str(e)[:200]}")
+        detail = getattr(e, "server_message", None) or str(e)
+        hint = ""
+        if "402" in str(e):
+            hint = (" The account may not create Spaces through the API (e.g. unverified email);"
+                    f" create https://huggingface.co/spaces/{SPACE} once in the web UI"
+                    " (SDK: Docker, Blank, CPU basic), then re-run this workflow.")  # fmt: skip
+        fail(f"could not create {SPACE}: {detail[:300]}.{hint}")
     with tempfile.TemporaryDirectory() as tmp:
         stage = Path(tmp)
         for f in FILES:
