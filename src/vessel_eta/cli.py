@@ -202,13 +202,21 @@ def train_cmd(
         dt.datetime,
         typer.Option(formats=["%Y-%m-%d"], help="Arrivals from this day are the test set"),
     ] = dt.datetime(2023, 3, 1),
-    name: str = "eta_v1",
+    version: Annotated[
+        str, typer.Option(help="v1: single regressor; v2: decomposed + quantiles")
+    ] = "v1",
     port_config: Annotated[Path, typer.Option("--port", help="Port YAML")] = DEFAULT_PORT_CONFIG,
 ) -> None:
-    """Baselines + LightGBM; writes reports/<name>.md|json and models/<name>.txt."""
-    from vessel_eta.experiment import REPORTS_DIR, run  # lightgbm import is slow-ish
+    """Baselines + model; writes reports/eta_<version>.md|json."""
+    from vessel_eta.experiment import REPORTS_DIR, run, run_v2  # lightgbm import is slow-ish
 
-    res = run(load_port(port_config), test_start.replace(tzinfo=dt.UTC), name)
+    name = f"eta_{version}"
+    start = test_start.replace(tzinfo=dt.UTC)
+    if version == "v2":
+        res = run_v2(load_port(port_config), start, name)
+        console.print(Path(REPORTS_DIR / f"{name}.md").read_text())
+        return
+    res = run(load_port(port_config), start, name)
     t = Table(title=f"{name}: test ({res['sizes']['test']['voyages']} voyages), hours")
     for c in ("model", "mae_h", "median_ae_h", "voyage_mae_h", "median_bias_h"):
         t.add_column(c, justify="right")

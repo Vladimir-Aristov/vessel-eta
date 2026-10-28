@@ -3,10 +3,12 @@
 Predicting when a ship will arrive at port, and spotting ships that behave strangely,
 from raw AIS transponder data published by NOAA.
 
-> **Status:** data pipeline, ETA labels and a first model done (Jan–Mar 2023: 880 arrivals,
-> 1.13M labelled points). Headline: on moving ships the model beats physics by ~5–7%; the
-> error is dominated by *anchorage waiting*, which AIS alone barely predicts — see
-> [First model](#first-model-and-what-it-tells-us).
+> **Status:** data → labels → two model generations (Jan–Mar 2023: 880 arrivals, 1.13M
+> labelled points). The current model splits ETA into *travel* + *will it queue* +
+> *how long*, and returns an interval: for ships under way it is 10–14% more accurate
+> than distance/speed, and its 80% intervals actually hold 79–83% of outcomes (the
+> baseline's hold 47% near port). Waiting time itself stays hard — see
+> [Decomposed ETA](#decomposed-eta-with-intervals).
 
 ![Labelled approaches to LA / Long Beach](docs/img/approaches_map.png)
 
@@ -208,6 +210,62 @@ decomposition: *travel time to the next stop* (predictable from motion) + *will 
 first* (classifier) + *how long it waits* (survival-style, with port congestion), with
 quantile outputs so the answer can be "2 h if it goes in, 1–4 days if it queues".
 
+## Decomposed ETA with intervals
+
+`uv run vessel-eta train --version v2` → [`reports/eta_v2.md`](reports/eta_v2.md);
+code in [`decompose.py`](src/vessel_eta/decompose.py).
+
+v1 said the error is the queue, so v2 models the queue explicitly:
+
+```
+ship under way:  ETA = T + B·W     T  time to the next event (waiting starts, or arrival)  quantile LightGBM
+                                   B  will it wait before arriving?                       classifier
+                                   W  from the start of that wait to arrival               quantile LightGBM
+ship waiting:    ETA = A           A  remaining time to arrival                           quantile LightGBM
+```
+
+- **Waiting** is not only anchoring: of approach points more than 3 days out, 53% are at
+  anchor ~15 km from the gate, ~27% drift or crawl at 0.5–3 kn 70–80 km offshore, and
+  some are moored at other ports in the region. An *episode* is a run where the centred
+  30-min median SOG stays under 2 kn for ≥1 h, merged across gaps < 6 h, kept if ≥2 h:
+  344 episodes on 287 of 880 voyages, median 27 h, p90 147 h.
+- **Which branch answers** is decided from what is visible now (mean SOG over the last
+  30 min < 2 kn), never from the labels.
+- The ETA **distribution** of a moving ship is the mixture of T, B and W, built by
+  sampling (7 quantiles per model); the point forecast is its median.
+- **Conformal step (CQR):** the raw quantiles under-covered even inside Jan–Feb (76% for a
+  nominal 80%, mostly above P90). P10/P90 are widened in log space per branch so that 10%
+  of outcomes fall on each side on held-out *ships* of the training period. Grouped CV:
+  76.5% → 78.9% ([`reports/cv_v2_coverage.md`](reports/cv_v2_coverage.md)).
+
+**Test, March 2023** (same split and baselines as v1; hours):
+
+| ship state | distance / speed | v1 | v2 | v2 P10–P90 coverage / median width | baseline* coverage / width |
+|---|---|---|---|---|---|
+| moving, < 30 km from gate | 12.5 | 11.9 | **11.2** | **0.83** / 18 h | 0.47 / 18 h |
+| moving, ≥ 30 km | 28.8 | 26.8 | **24.7** | **0.79** / 40 h | 0.86 / 66 h |
+| slow (0.5–5 kn) | 75.1 | 85.7 | 77.0 | 0.88 / 277 h | 0.82 / 257 h |
+| stationary | 148.2 | 150.1 | 143.1 | 0.71 / 277 h | 0.79 / 430 h |
+| **all points** (MAE / coverage) | 97.1 | 99.4 | 93.7 | 0.77 | 0.79 |
+
+\* calibrated distance/speed × empirical quantiles of its training residuals, per branch.
+
+- **Ships under way** — the case an ETA is for — get the best point forecast (−10% / −14%
+  vs distance/speed near / far) and intervals that mean what they say. The baseline's
+  "80%" interval near the port holds 47% of outcomes at the same width.
+- **Will it wait?** AUC 0.85, Brier 0.142 vs 0.245 for the base rate. In March, 37% of
+  moving-ship rows were followed by a wait against 25% in Jan–Feb, and the classifier
+  under-predicts at every level (e.g. says 0.72, observed 0.88): the share of ships
+  queueing rose, and nothing in the features fully explains why.
+- **Waiting time** remains the weak part: for ships at anchor the median forecast is no
+  better than a two-parameter calibration, and coverage drops to 71% in March because
+  waits there ran longer than anything in the training months. The median of v2 is
+  nearly unbiased overall (−1.3 h vs −13 h for v1).
+
+What would move the needle next is not model capacity but information AIS does not
+carry: berth schedules and vessel line-ups (published by the ports), and a longer history
+so that a month like March is not out of distribution.
+
 ## Quickstart
 
 ```bash
@@ -218,7 +276,9 @@ uv run vessel-eta report                    # data quality summary
 uv run vessel-eta labels                    # tracks -> voyages -> ETA labels
 uv run python scripts/plot_labels.py        # README figures
 uv run python scripts/cv_ablation.py        # model selection (grouped CV, Jan-Feb)
-uv run vessel-eta train                     # baselines + LightGBM, March test -> reports/
+uv run vessel-eta train                     # v1: baselines + LightGBM, March test -> reports/
+uv run vessel-eta train --version v2        # v2: decomposed ETA with conformal intervals
+uv run python scripts/cv_v2_coverage.py     # v2 interval coverage, grouped CV inside Jan-Feb
 uv run pytest
 ```
 
@@ -229,10 +289,11 @@ NOAA's server is slow (~0.5–1 MB/s per connection); `--concurrency` helps.
 1. ~~**Data pipeline**~~ — download, normalise, clean, partition.
 2. ~~**Trajectories and labels**~~ — clean tracks, port geofence, arrivals, ETA labels.
 3. ~~**Baselines**~~ — causal features, time + ship validation, LightGBM vs physics.
-4. **Decomposed ETA** — time to next stop + anchor-or-not + waiting time, quantile outputs;
-   then a sequence model (GRU / transformer) over the recent track for the travel part.
-5. **Anomalies** — AIS gaps, loitering, rendezvous; vessel-type classifier from motion only.
-6. **Serving** — FastAPI endpoint, Docker, a map demo, drift monitoring.
+4. ~~**Decomposed ETA**~~ — travel + will-it-wait + waiting time, conformal intervals.
+5. **More signal** — a year of data; port line-up / berth schedules as features; then a
+   sequence model (GRU / transformer) over the recent track for the travel part.
+6. **Anomalies** — AIS gaps, loitering, rendezvous; vessel-type classifier from motion only.
+7. **Serving** — FastAPI endpoint, Docker, a map demo, drift monitoring.
 
 ## Layout
 
@@ -250,9 +311,11 @@ src/vessel_eta/
   voyages.py               arrivals, approach segments, ETA labels
   features.py              causal point features + port congestion
   modeling.py              splits, baselines, metrics, LightGBM, grouped CV
-  experiment.py            `train`: end-to-end run -> reports/
+  decompose.py             v2: waiting episodes, classifier + quantile models, CQR
+  experiment.py            `train`: end-to-end runs (v1, v2) -> reports/
 scripts/plot_labels.py     README figures
 scripts/cv_ablation.py     model selection table
+scripts/cv_v2_coverage.py  v2 interval coverage in grouped CV
 reports/                   eval reports (markdown + json)
 tests/                     offline tests (fake HTTP server, synthetic files and tracks)
 ```
