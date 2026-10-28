@@ -54,17 +54,19 @@
     <input id="when" type="range" min="1" value="1">
     <div id="out"><p class="legend">Loading…</p></div>
     <footer>Model trained on arrivals before 2024-12-01. Data: NOAA / USCG AIS (CC0). Not for navigation.
-      API docs at <a href="/docs">/docs</a>.</footer>
+      <span id="modeNote">API docs at <a href="/docs">/docs</a>.</span></footer>
   </aside>
   <div id="map"></div>
 </main>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
+// "api": ask the running service; "static": precomputed by scripts/build_static_demo.py
+const CONFIG = { mode: "api", samples: "/static/samples.json", forecasts: null };
 const $ = (id) => document.getElementById(id);
 const fmt = (d) => new Date(d).toISOString().replace("T", " ").slice(0, 16) + " UTC";
 const hours = (ms) => (ms / 3.6e6);
-let data, sample, timer;
+let data, sample, sampleIdx, timer, precomputed;
 
 const map = L.map("map", { zoomControl: true }).setView([33.6, -118.6], 8);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -110,9 +112,24 @@ function render(res, i) {
     <div class="row"><span>Hours to actual arrival</span><span>${hours(actual - now).toFixed(1)} h</span></div>`;
 }
 
+function fromPrecomputed(i) {
+  // [p10, p50, p90 minutes, p_wait or null, waiting_now 0/1, km to gate]
+  const f = precomputed[sampleIdx][i - 1];
+  if (!f) return null;
+  const asOf = new Date(sample.track[i - 1].ts).getTime();
+  const at = (m) => new Date(asOf + m * 60000).toISOString();
+  return { eta: { p10: at(f[0]), p50: at(f[1]), p90: at(f[2]) }, p_wait_before_arrival: f[3],
+           waiting_now: !!f[4], distance_to_gate_km: f[5] };
+}
+
 async function forecast() {
   const i = +$("when").value;
   draw(i);
+  if (CONFIG.mode === "static") {
+    const res = fromPrecomputed(i);
+    if (res) render(res, i); else $("out").innerHTML = `<p class="err">no forecast for this point</p>`;
+    return;
+  }
   const body = { ship: sample.ship, track: sample.track.slice(0, i) };
   const r = await fetch("/v1/eta", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const res = await r.json();
@@ -121,6 +138,7 @@ async function forecast() {
 }
 
 function pick(k) {
+  sampleIdx = k;
   sample = data.samples[k];
   const n = sample.track.length;
   $("when").max = n;
@@ -129,8 +147,16 @@ function pick(k) {
   forecast();
 }
 
-fetch("/static/samples.json").then((r) => r.json()).then((d) => {
+const loads = [fetch(CONFIG.samples).then((r) => r.json())];
+if (CONFIG.mode === "static") {
+  loads.push(fetch(CONFIG.forecasts).then((r) => r.json()));
+  $("modeNote").innerHTML = 'Forecasts precomputed by the shipped model through the API code path ' +
+    '(<code>scripts/build_static_demo.py</code>); the live API runs with <code>docker run</code>. ' +
+    '<a href="https://github.com/Vladimir-Aristov/vessel-eta">Source</a>.';
+}
+Promise.all(loads).then(([d, f]) => {
   data = d;
+  precomputed = f;
   L.polygon(d.port.polygon, { color: getComputedStyle(document.documentElement).getPropertyValue("--port"), weight: 2, fillOpacity: 0.05 })
     .addTo(map).bindTooltip("port (inside the breakwater)");
   d.samples.forEach((s, k) => {

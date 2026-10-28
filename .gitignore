@@ -21,3 +21,4 @@ wheels/
 .coverage.*
 htmlcov/
 .mypy_cache/
+/site/

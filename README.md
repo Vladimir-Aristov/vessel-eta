@@ -3,6 +3,8 @@
 [![ci](https://github.com/Vladimir-Aristov/vessel-eta/actions/workflows/ci.yml/badge.svg)](https://github.com/Vladimir-Aristov/vessel-eta/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+**Live demo:** https://vladimir-aristov.github.io/vessel-eta/ (forecasts precomputed by the shipped model; the API runs with `docker run`)
+
 Probabilistic ETA for cargo ships and tankers approaching the ports of **Los Angeles and
 Long Beach**, built end to end from raw NOAA AIS transponder data: 6.1 billion raw rows →
 378M clean positions (2023–24) → 7,937 port arrivals → a model that says not just *when*
