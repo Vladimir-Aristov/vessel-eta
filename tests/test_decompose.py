@@ -125,3 +125,25 @@ def test_interval_metrics():
     m = interval_metrics(df, "lo", "mid", "hi")
     assert m["coverage_p10_p90"] == pytest.approx(1 / 3)
     assert m["below_p10"] == pytest.approx(1 / 3) and m["above_p90"] == pytest.approx(1 / 3)
+
+
+def test_conformal_widen_targets_ten_percent_each_side():
+    from vessel_eta.decompose import apply_widen, conformal_widen
+
+    rng = np.random.default_rng(0)
+    n = 4000
+    truth = np.exp(rng.normal(5, 1, n))
+    # deliberately too-narrow raw interval around the right median
+    pred = pl.DataFrame({
+        "waiting_now": rng.random(n) < 0.5,
+        "eta_min": truth,
+        "eta_p50": np.full(n, np.exp(5.0)),
+        "eta_p10": np.full(n, np.exp(4.8)),
+        "eta_p90": np.full(n, np.exp(5.2)),
+    })  # fmt: skip
+    widened = apply_widen(pred, conformal_widen(pred))
+    y = widened["eta_min"].to_numpy()
+    assert abs(np.mean(y < widened["eta_p10"].to_numpy()) - 0.1) < 0.02
+    assert abs(np.mean(y > widened["eta_p90"].to_numpy()) - 0.1) < 0.02
+    assert (widened["eta_p10"] <= widened["eta_p50"]).all()
+    assert (widened["eta_p90"] >= widened["eta_p50"]).all()

@@ -37,6 +37,10 @@ console = Console()
 log = logging.getLogger("vessel_eta")
 
 MANIFEST = "_manifest.jsonl"
+LABEL_INPUT_COLS = [
+    "mmsi", "ts", "lat", "lon", "sog", "cog", "heading", "status",
+    "vessel_type", "length", "width", "draft", "vessel_name",
+]  # fmt: skip
 
 ConfigOpt = Annotated[Path, typer.Option("--config", "-c", help="Data config YAML")]
 StartOpt = Annotated[
@@ -172,6 +176,7 @@ def labels_cmd(
     points = (
         pl.scan_parquet(in_dir / "**" / "*.parquet", hive_partitioning=False)
         .filter(pl.col("vessel_type").is_between(lo, hi))
+        .select(LABEL_INPUT_COLS)  # skip IMO / call sign / transceiver: ~30% less memory
         .collect()
     )
     log.info(

@@ -218,6 +218,41 @@ def compose_moving(
     return out
 
 
+def conformal_widen(
+    pred: pl.DataFrame, fallback: dict[bool, tuple[float, float]] | None = None, min_rows: int = 50
+) -> dict[bool, tuple[float, float]]:
+    """Per-branch (lower, upper) log-space shifts that put 10% of outcomes outside each side.
+
+    `pred` holds raw (un-widened) eta_p10 / eta_p90 and the true eta_min. Branches with
+    fewer than `min_rows` rows keep the `fallback` shift.
+    """
+    fallback = fallback or {True: (0.0, 0.0), False: (0.0, 0.0)}
+    widen = {}
+    for waiting in (True, False):
+        part = pred.filter(pl.col("waiting_now") == waiting)
+        if part.height < min_rows:
+            widen[waiting] = fallback[waiting]
+            continue
+        y = np.log1p(part["eta_min"].to_numpy())
+        lo = np.log1p(part["eta_p10"].to_numpy())
+        hi = np.log1p(part["eta_p90"].to_numpy())
+        widen[waiting] = (float(np.quantile(lo - y, 0.9)), float(np.quantile(y - hi, 0.9)))
+    return widen
+
+
+def apply_widen(pred: pl.DataFrame, widen: dict[bool, tuple[float, float]]) -> pl.DataFrame:
+    """Widen raw eta_p10 / eta_p90 by per-branch log-space shifts (never crossing the median)."""
+    w = pl.col("waiting_now")
+    d_lo = pl.when(w).then(widen[True][0]).otherwise(widen[False][0])
+    d_hi = pl.when(w).then(widen[True][1]).otherwise(widen[False][1])
+    return pred.with_columns(
+        eta_p10=pl.min_horizontal(
+            ((pl.col("eta_p10").log1p() - d_lo).exp() - 1).clip(lower_bound=0), "eta_p50"
+        ),
+        eta_p90=pl.max_horizontal((pl.col("eta_p90").log1p() + d_hi).exp() - 1, "eta_p50"),
+    )
+
+
 @dataclass
 class DecomposedETA:
     stop: StopClassifier
@@ -250,20 +285,9 @@ class DecomposedETA:
         outcomes fall below / above them. Quantile regression with heavy regularisation
         and flat tails under-covers otherwise (76% in-period CV for a nominal 80%).
         """
-        raw = self.widen
+        fallback = self.widen
         self.widen = {True: (0, 0), False: (0, 0)}
-        pred = self.predict(calib)
-        widen = {}
-        for waiting in (True, False):
-            part = pred.filter(pl.col("waiting_now") == waiting)
-            if part.height < 50:
-                widen[waiting] = raw[waiting]
-                continue
-            y = np.log1p(part["eta_min"].to_numpy())
-            lo = np.log1p(part["eta_p10"].to_numpy())
-            hi = np.log1p(part["eta_p90"].to_numpy())
-            widen[waiting] = (float(np.quantile(lo - y, 0.9)), float(np.quantile(y - hi, 0.9)))
-        self.widen = widen
+        self.widen = conformal_widen(self.predict(calib), fallback)
         return self
 
     def predict(self, df: pl.DataFrame) -> pl.DataFrame:

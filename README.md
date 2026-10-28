@@ -3,13 +3,13 @@
 Predicting when a ship will arrive at port, and spotting ships that behave strangely,
 from raw AIS transponder data published by NOAA.
 
-> **Status:** a full year of AIS (2023: 187M clean points, 3,744 labelled arrivals at LA /
-> Long Beach) and two model generations. The current model splits ETA into *travel* +
-> *will it queue* + *how long* and returns an 80% interval. Trained on Jan–Sep and tested
-> on Oct–Dec it beats every baseline in every ship state (−23% MAE vs distance/speed,
-> −10% vs a calibrated version on ships at anchor), and its intervals hold 80.3% of
-> outcomes. Adding public port-queue data (IMF PortWatch, the Port of LA's daily summary)
-> changed nothing measurable — see [A full year](#a-full-year-and-does-public-queue-data-help).
+> **Status:** two years of AIS (2023–24: 378M clean points, 7,937 labelled arrivals at LA /
+> Long Beach). The model splits ETA into *travel* + *will it queue* + *how long* and returns
+> an 80% interval. **Trained on 2023 and tested on all of 2024** it beats every baseline
+> (−18% MAE vs distance/speed, −8% vs a calibrated version), and with monthly
+> re-calibration its intervals hold 78.7% of outcomes (80.1% for ships under way) — see
+> [Out-of-time test on 2024](#out-of-time-test-train-2023-test-2024). Public port-queue data
+> and a GRU over the raw track were tested and did not help.
 
 ![Labelled approaches to LA / Long Beach](docs/img/approaches_map.png)
 
@@ -367,6 +367,47 @@ held-out ships of Jan–Sep, test scored once.
   Not worth a second model and a PyTorch dependency in serving, so v2 keeps LightGBM for T.
   (Neural results move by a few % between runs: MPS training is not bit-reproducible.)
 
+## Out-of-time test: train 2023, test 2024
+
+The strictest check available: the model is fitted on 2023 only and scored on every
+arrival of 2024 (4,193 voyages, 1,697 ships) — a year it has never seen, with its own
+seasons and queues. 2024 is GeoParquet from a different NOAA feed; the same pipeline reads
+it. Hours; [`reports/eta_v2_2024_base.md`](reports/eta_v2_2024_base.md).
+
+| ship state | distance / speed | calibrated | v1 | **v2** |
+|---|---|---|---|---|
+| moving, < 30 km from gate | 15.8 | 16.3 | 16.5 | **14.1** |
+| moving, ≥ 30 km | 21.5 | 22.5 | 19.1 | **17.7** |
+| slow (0.5–5 kn) | 86.0 | 82.4 | **74.3** | **74.3** |
+| stationary | 138.5 | 119.6 | 116.5 | **112.9** |
+| **all points** (MAE / voyage MAE) | 85.8 / 13.4 | 76.4 / 15.8 | 72.9 / 15.2 | **70.5 / 12.7** |
+
+- v2 holds up a year later: best or tied in every state, median bias −0.2 h. Ships it never
+  saw in 2023 have a voyage MAE of 15.0 h vs 10.8 h for returning ships (distance/speed:
+  16.0 vs 11.3) — the model is not just memorising regular callers.
+- "Will it wait?" keeps AUC 0.85, Brier 0.119 vs 0.190 for the base rate. The share of
+  waiting is the same in both years (25%).
+- PortWatch + smoothed AIS queue again change nothing (70.9 vs 70.5).
+
+**Intervals drift, and a monthly re-calibration fixes most of it.** Calibrated once on
+2023, the 80% intervals hold only 75% in 2024, and the misses are one-sided: 17% of
+outcomes land above P90. Waits got longer (p90 of waiting voyages 359 h vs 315 h in 2023).
+The model itself is fine; its uncertainty is stale. Re-estimating the conformal shifts at
+the start of each month from the previous month's arrivals — whose outcomes are known by
+then, so nothing leaks — and never refitting the model
+([`scripts/rolling_conformal.py`](scripts/rolling_conformal.py),
+[`reports/rolling_conformal.md`](reports/rolling_conformal.md)):
+
+| P10–P90 intervals in 2024 | coverage | below P10 / above P90 | median width | pinball |
+|---|---|---|---|---|
+| static (2023 held-out ships) | 0.750 | 7.9% / 17.1% | 161 h | 24.7 |
+| **re-calibrated monthly** | **0.787** | **10.0% / 11.4%** | 190 h | **24.1** |
+| — ships under way | 0.801 | 9.7% / 10.2% | 21 h | 7.3 |
+| — ships waiting | 0.775 | 10.1% / 12.3% | 319 h | 37.2 |
+
+That is the operational lesson: in production, recalibrate the intervals on a schedule
+(cheap, label-driven) long before the model itself needs retraining.
+
 ## Quickstart
 
 ```bash
@@ -381,6 +422,8 @@ uv run python scripts/cv_ablation.py        # model selection (grouped CV, Jan-F
 uv run vessel-eta train                     # v1: baselines + LightGBM, March test -> reports/
 uv run vessel-eta train --version v2        # v2: decomposed ETA with conformal intervals
 uv run python scripts/cv_v2_coverage.py     # v2 interval coverage, grouped CV inside Jan-Feb
+uv run vessel-eta train --version v2 --test-start 2024-01-01   # train 2023, test 2024
+uv run python scripts/rolling_conformal.py  # 2024 with monthly re-calibrated intervals
 uv run pytest
 ```
 
@@ -396,9 +439,9 @@ client, so throughput scales with connections: going from 6 to 12 took the pipel
 4. ~~**Decomposed ETA**~~ — travel + will-it-wait + waiting time, conformal intervals.
 5. ~~**More data and public queue data**~~ — a year of AIS (the lever); PortWatch and the
    Port of LA summary tested (no gain).
-6. **Next signal** — ~~a sequence model for travel time~~ (GRU: signal, but no gain over
-   LightGBM); a second year (2024) as an out-of-time test; berth line-ups (Marine
-   Exchange, paid) or terminal schedules.
+6. ~~**Next signal**~~ — GRU for travel time (signal, but no gain over LightGBM); 2024 as an
+   out-of-time test (holds up; intervals need monthly re-calibration). Still open: berth
+   line-ups (Marine Exchange, paid) or terminal schedules.
 7. **Anomalies** — AIS gaps, loitering, rendezvous; vessel-type classifier from motion only.
 8. **Serving** — FastAPI endpoint, Docker, a map demo, drift monitoring.
 
@@ -427,6 +470,7 @@ scripts/plot_labels.py     README figures
 scripts/cv_ablation.py     model selection table
 scripts/cv_v2_coverage.py  v2 interval coverage in grouped CV
 scripts/travel_models.py   LightGBM vs MLP vs GRU for travel time
+scripts/rolling_conformal.py  2024 out-of-time: static vs monthly re-calibrated intervals
 reports/                   eval reports (markdown + json)
 tests/                     offline tests (fake HTTP server, synthetic files and tracks)
 ```
