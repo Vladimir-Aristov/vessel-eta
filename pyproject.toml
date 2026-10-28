@@ -7,6 +7,7 @@ license = "MIT"
 authors = [{ name = "Vladimir Aristov" }]
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.162.0",
     "httpx>=0.28.1",
     "lightgbm>=4.7.0",
     "matplotlib>=3.11.2",
@@ -18,6 +19,7 @@ dependencies = [
     "scikit-learn>=1.9.1",
     "shapely>=2.2.0",
     "typer>=0.27.3",
+    "uvicorn[standard]>=0.54.0",
 ]
 
 [project.scripts]
@@ -48,6 +50,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["network: tests that hit the real NOAA servers (deselect with -m 'not network')"]
+filterwarnings = ["ignore:Using `httpx` with `starlette.testclient`:DeprecationWarning"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E501"]  # long literal AIS rows read better unwrapped

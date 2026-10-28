@@ -268,6 +268,40 @@ def portwatch_cmd(
     log.info("PortWatch: %d days, %s .. %s", daily.height, daily["day"].min(), daily["day"].max())
 
 
+@app.command("export-model")
+def export_model_cmd(
+    out: Annotated[Path, typer.Option(help="Artifact directory")] = Path("artifacts/eta_v2"),
+    train_end: Annotated[
+        dt.datetime | None,
+        typer.Option(formats=["%Y-%m-%d"], help="train on arrivals before this day only"),
+    ] = None,
+    port_config: Annotated[Path, typer.Option("--port", help="Port YAML")] = DEFAULT_PORT_CONFIG,
+) -> None:
+    """Train the production model on labelled data and save the artifact."""
+    from vessel_eta.production import train_production
+
+    te = train_end.replace(tzinfo=dt.UTC) if train_end else None
+    info = train_production(load_port(port_config), out, train_end=te)
+    console.print_json(data=info)
+
+
+@app.command("recalibrate")
+def recalibrate_cmd(
+    days: Annotated[int, typer.Option(help="Use arrivals from the last N days")] = 30,
+    end: Annotated[
+        dt.datetime | None,
+        typer.Option(formats=["%Y-%m-%d"], help="window end (default: newest arrival)"),
+    ] = None,
+    path: Annotated[Path, typer.Option(help="Artifact directory")] = Path("artifacts/eta_v2"),
+    port_config: Annotated[Path, typer.Option("--port", help="Port YAML")] = DEFAULT_PORT_CONFIG,
+) -> None:
+    """Re-estimate only the interval shifts of an exported model from recent arrivals."""
+    from vessel_eta.production import recalibrate
+
+    e = end.replace(tzinfo=dt.UTC) if end else None
+    console.print_json(data=recalibrate(load_port(port_config), path, days, e))
+
+
 @app.command("report")
 def report_cmd(out_dir: Path = INTERIM_DIR) -> None:
     """Data quality summary of the ingested partitions."""

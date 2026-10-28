@@ -35,6 +35,9 @@ but *how sure*: "2 h if it goes straight in, 1–4 days if it queues".
   GRU over the raw track did not beat the simpler model ([GRU](#does-a-sequence-model-help-gru-for-travel-time)).
 - **Out-of-time test and drift**: a year later the model holds up but its intervals go
   stale; monthly re-calibration fixes it ([2024](#out-of-time-test-train-2023-test-2024)).
+- **Serving**: FastAPI service (~9 ms per request) using the training feature code — no
+  train/serve skew, checked by a test — gzipped text artifact, re-calibration command,
+  Docker image built and smoke-tested in CI, and a map demo ([Serving](#serving-api-docker-demo)).
 
 ![Labelled approaches to LA / Long Beach](docs/img/approaches_map.png)
 
@@ -432,6 +435,62 @@ then, so nothing leaks — and never refitting the model
 That is the operational lesson: in production, recalibrate the intervals on a schedule
 (cheap, label-driven) long before the model itself needs retraining.
 
+## Serving: API, Docker, demo
+
+![Map demo](docs/img/demo.jpg)
+
+```bash
+uv run uvicorn vessel_eta.serving.app:app --port 8000   # or: docker build -t vessel-eta . && docker run -p 8000:8000 vessel-eta
+open http://localhost:8000          # map demo: real December 2024 ships the model never saw
+open http://localhost:8000/docs     # OpenAPI
+curl -s -X POST localhost:8000/v1/eta -H 'content-type: application/json' -d @examples/request.json
+```
+
+```json
+{
+  "as_of": "2024-12-22T22:50:07Z",
+  "eta": {"p10": "2024-12-23T00:45:25Z", "p50": "2024-12-23T01:15:26Z", "p90": "2024-12-23T01:49:19Z"},
+  "waiting_now": false,
+  "p_wait_before_arrival": 0.05,
+  "distance_to_gate_km": 28.7,
+  "points_received": 120, "points_used": 120, "model_version": "v2"
+}
+```
+
+(Abridged. That ship, BRO NISSUM, actually arrived at 01:17.)
+
+- **One feature implementation.** The request is turned into the same table the training
+  pipeline builds and goes through the same `build_features`;
+  [`tests/test_serving.py`](tests/test_serving.py) checks the served feature row equals the
+  training one for the same points (and fails if the serving path is changed).
+- **The client sends the current approach, not a snippet.** Features like "minutes
+  stationary so far" are measured from the first point sent, as in training. The service
+  cleans the track with the training rules, cuts it at silences > 6 h, and refuses a ship
+  that is already inside the breakwater (`422`, "arrived"). Input is validated (MMSI range,
+  cargo/tanker types, ordered timestamps, ≤ 30 days, ≤ 20k points).
+- **Artifact** ([`artifact.py`](src/vessel_eta/artifact.py), `artifacts/eta_v2/`, 7 MB):
+  22 LightGBM models in their gzipped text format + `meta.json` (features, quantiles,
+  conformal shifts, provenance). No pickle. `uv run vessel-eta export-model` rebuilds it.
+- **Re-calibration as an operation**: `uv run vessel-eta recalibrate --days 30` re-estimates
+  only the interval shifts from recent arrivals and records it in `meta.json`.
+
+The shipped artifact is trained on arrivals up to 2024-11-30 and re-calibrated on November,
+so the demo's December voyages are unseen. On all December 2024 arrivals (355 voyages,
+[`scripts/evaluate_artifact.py`](scripts/evaluate_artifact.py)):
+
+| state | distance / speed MAE | model MAE | 80% interval holds | median width |
+|---|---|---|---|---|
+| all | 68.9 h | **53.9 h** | 0.74 | 106 h |
+| moving, < 30 km from gate | 13.5 h | **11.2 h** | 0.82 | 1.2 h |
+| moving, ≥ 30 km | 17.9 h | **14.5 h** | 0.77 | 17 h |
+| at anchor | 120.6 h | **91.7 h** | 0.70 | 172 h |
+
+Coverage is under target here, and that is the honest flip side of the 2024 study: a
+one-month re-calibration window helps over the year (0.75 → 0.79) but not every month, and
+November → December is one where it hurt (Dec 2024 in that study: 0.81 static, 0.77
+re-calibrated). A longer or exponentially weighted window would trade a little speed of
+adaptation for stability.
+
 ## Quickstart
 
 ```bash
@@ -448,6 +507,9 @@ uv run vessel-eta train --version v2        # v2: decomposed ETA with conformal 
 uv run python scripts/cv_v2_coverage.py     # v2 interval coverage, grouped CV inside Jan-Feb
 uv run vessel-eta train --version v2 --test-start 2024-01-01   # train 2023, test 2024
 uv run python scripts/rolling_conformal.py  # 2024 with monthly re-calibrated intervals
+uv run vessel-eta export-model --train-end 2024-12-01   # production artifact
+uv run vessel-eta recalibrate --days 30 --end 2024-12-01
+uv run uvicorn vessel_eta.serving.app:app --port 8000   # API + map demo
 uv run pytest
 ```
 
@@ -466,8 +528,8 @@ client, so throughput scales with connections: going from 6 to 12 took the pipel
 6. ~~**Next signal**~~ — GRU for travel time (signal, but no gain over LightGBM); 2024 as an
    out-of-time test (holds up; intervals need monthly re-calibration). Still open: berth
    line-ups (Marine Exchange, paid) or terminal schedules.
-7. **Anomalies** — AIS gaps, loitering, rendezvous; vessel-type classifier from motion only.
-8. **Serving** — FastAPI endpoint, Docker, a map demo, drift monitoring.
+7. ~~**Serving**~~ — FastAPI, artifact, re-calibration command, Docker + CI smoke test, map demo.
+8. **Anomalies** — AIS gaps, loitering, rendezvous; vessel-type classifier from motion only.
 
 ## Layout
 
@@ -483,6 +545,10 @@ src/vessel_eta/
   data/portwatch.py        IMF PortWatch download + lagged features
   data/pola.py             Port of LA daily container summary (PDF) parser
   sequence.py              GRU (+ tabular) quantile model for travel time
+  artifact.py              save / load the model (gzipped LightGBM text + meta.json)
+  production.py            train on all data, re-calibrate intervals
+  serving/predictor.py     request -> training feature path -> ETA distribution
+  serving/app.py           FastAPI app; serving/static/ = map demo
   geo.py                   distances, port geofence
   tracks.py                spikes / ghosts / replays -> one clean track per ship
   voyages.py               arrivals, approach segments, ETA labels
@@ -495,6 +561,11 @@ scripts/cv_ablation.py     model selection table
 scripts/cv_v2_coverage.py  v2 interval coverage in grouped CV
 scripts/travel_models.py   LightGBM vs MLP vs GRU for travel time
 scripts/rolling_conformal.py  2024 out-of-time: static vs monthly re-calibrated intervals
+scripts/make_demo_samples.py  December 2024 voyages for the demo
+scripts/evaluate_artifact.py  score the shipped artifact on unseen arrivals
+artifacts/eta_v2/          the shipped model
+examples/request.json      a sample API request
+Dockerfile                 API image (no PyTorch), smoke-tested in CI
 reports/                   eval reports (markdown + json)
 tests/                     offline tests (fake HTTP server, synthetic files and tracks)
 ```

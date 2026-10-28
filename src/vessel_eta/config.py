@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
-ROOT = Path(__file__).resolve().parents[2]
+# Project root (configs/, data/, artifacts/). Set VESSEL_ETA_ROOT when the package is
+# installed rather than run from the source tree (e.g. in the Docker image).
+ROOT = Path(os.environ.get("VESSEL_ETA_ROOT", Path(__file__).resolve().parents[2]))
 DATA_DIR = ROOT / "data"
 RAW_DIR = DATA_DIR / "raw" / "ais"
 INTERIM_DIR = DATA_DIR / "interim" / "ais"
