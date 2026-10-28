@@ -12,7 +12,12 @@ wheels/
 # Data and artefacts (never commit)
 /data
 /models/
+/artifacts/replay_*
 /mlruns/
 .pytest_cache/
 .ruff_cache/
 .DS_Store
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/

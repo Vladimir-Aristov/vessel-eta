@@ -66,3 +66,8 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 no_implicit_optional = true
 check_untyped_defs = true
+
+[tool.coverage.run]
+source = ["vessel_eta"]
+# optional extra (PyTorch): its tests run only when `uv sync --extra nn` installed it
+omit = ["*/vessel_eta/sequence.py"]

@@ -13,9 +13,10 @@ but *how sure*: "2 h if it goes straight in, 1–4 days if it queues".
 | | distance / speed | calibrated physics | single LightGBM | **this model** |
 |---|---|---|---|---|
 | MAE, all predictions | 85.8 h | 76.4 h | 72.9 h | **70.5 h** |
-| MAE, ships under way far out | 21.5 h | 22.5 h | 19.1 h | **17.7 h** |
+| MAE, ships under way far out | 21.5 h | 22.5 h | 19.1 h | **17.8 h** |
 | MAE, ships at anchor | 138.5 h | 119.6 h | 116.5 h | **112.9 h** |
-| 80% interval actually holds | — | 0.78 | — | **0.79** (0.80 under way) |
+| 80% interval actually holds | — | 0.78 | — | **0.78** (0.80 under way), re-calibrated monthly |
+| … at a median interval width of | — | 239 h | — | **189 h** |
 
 **What is in here**
 
@@ -38,6 +39,10 @@ but *how sure*: "2 h if it goes straight in, 1–4 days if it queues".
 - **Serving**: FastAPI service (~9 ms per request) using the training feature code — no
   train/serve skew, checked by a test — gzipped text artifact, re-calibration command,
   Docker image built and smoke-tested in CI, and a map demo ([Serving](#serving-api-docker-demo)).
+- **Operations**: monthly monitoring with drift gates calibrated on the training data, a
+  replayed year of it, Prometheus metrics, load test, mypy and a coverage gate in CI,
+  [model card](docs/model_card.md) and [design notes](docs/design.md)
+  ([Operating the model](#operating-the-model-monitoring-gates-a-replayed-year)).
 
 ![Labelled approaches to LA / Long Beach](docs/img/approaches_map.png)
 
@@ -403,14 +408,14 @@ it. Hours; [`reports/eta_v2_2024_base.md`](reports/eta_v2_2024_base.md).
 
 | ship state | distance / speed | calibrated | v1 | **v2** |
 |---|---|---|---|---|
-| moving, < 30 km from gate | 15.8 | 16.3 | 16.5 | **14.1** |
-| moving, ≥ 30 km | 21.5 | 22.5 | 19.1 | **17.7** |
+| moving, < 30 km from gate | 15.8 | 16.3 | 16.5 | **14.0** |
+| moving, ≥ 30 km | 21.5 | 22.5 | 19.1 | **17.8** |
 | slow (0.5–5 kn) | 86.0 | 82.4 | **74.3** | **74.3** |
 | stationary | 138.5 | 119.6 | 116.5 | **112.9** |
-| **all points** (MAE / voyage MAE) | 85.8 / 13.4 | 76.4 / 15.8 | 72.9 / 15.2 | **70.5 / 12.7** |
+| **all points** (MAE / voyage MAE) | 85.8 / 13.4 | 76.4 / 15.8 | 72.9 / 15.2 | **70.5 / 12.6** |
 
 - v2 holds up a year later: best or tied in every state, median bias −0.2 h. Ships it never
-  saw in 2023 have a voyage MAE of 15.0 h vs 10.8 h for returning ships (distance/speed:
+  saw in 2023 have a voyage MAE of 15.0 h vs 10.7 h for returning ships (distance/speed:
   16.0 vs 11.3) — the model is not just memorising regular callers.
 - "Will it wait?" keeps AUC 0.85, Brier 0.119 vs 0.190 for the base rate. The share of
   waiting is the same in both years (25%).
@@ -419,21 +424,37 @@ it. Hours; [`reports/eta_v2_2024_base.md`](reports/eta_v2_2024_base.md).
 **Intervals drift, and a monthly re-calibration fixes most of it.** Calibrated once on
 2023, the 80% intervals hold only 75% in 2024, and the misses are one-sided: 17% of
 outcomes land above P90. Waits got longer (p90 of waiting voyages 359 h vs 315 h in 2023).
-The model itself is fine; its uncertainty is stale. Re-estimating the conformal shifts at
-the start of each month from the previous month's arrivals — whose outcomes are known by
-then, so nothing leaks — and never refitting the model
-([`scripts/rolling_conformal.py`](scripts/rolling_conformal.py),
-[`reports/rolling_conformal.md`](reports/rolling_conformal.md)):
+The model itself is fine; its uncertainty is stale. Two ways to keep the intervals honest
+without refitting the model, both using only outcomes already known at prediction time
+([`scripts/adaptive_calibration.py`](scripts/adaptive_calibration.py),
+[`reports/adaptive_calibration.md`](reports/adaptive_calibration.md)):
+
+- **monthly re-calibration**: at each month start, re-estimate the conformal shifts from the
+  previous month's arrivals;
+- **daily quantile tracking** ([`calibration.py`](src/vessel_eta/calibration.py)), the online
+  update of adaptive / PID conformal prediction: every day, nudge each shift by
+  `step × (miss rate − 10%)` using the voyages that arrived that day. Its step was tuned on
+  Oct–Dec 2023 with a model trained on Jan–Sep; a causality test proves it never uses an
+  outcome from the prediction's own day or later.
 
 | P10–P90 intervals in 2024 | coverage | below P10 / above P90 | median width | pinball |
 |---|---|---|---|---|
-| static (2023 held-out ships) | 0.750 | 7.9% / 17.1% | 161 h | 24.7 |
-| **re-calibrated monthly** | **0.787** | **10.0% / 11.4%** | 190 h | **24.1** |
-| — ships under way | 0.801 | 9.7% / 10.2% | 21 h | 7.3 |
-| — ships waiting | 0.775 | 10.1% / 12.3% | 319 h | 37.2 |
+| static (2023 held-out ships) | 0.748 | 8.0% / 17.2% | 161 h | 24.7 |
+| daily tracking (step 0.01) | 0.753 | 8.1% / 16.6% | 159 h | 24.7 |
+| **re-calibrated monthly** | **0.784** | **9.8% / 11.8%** | 189 h | **24.2** |
+| — ships under way | 0.799 | 9.7% / 10.4% | 22 h | 7.3 |
+| — ships waiting | 0.772 | 9.9% / 12.9% | 307 h | 37.3 |
 
-That is the operational lesson: in production, recalibrate the intervals on a schedule
-(cheap, label-driven) long before the model itself needs retraining.
+The textbook online method lost, and the reason is specific to ETA. Its step was tuned on a
+calm quarter where the 2023 intervals were already right (coverage 0.80), so the best step
+was the smallest (0.01) — the tracker learnt to stand still and then could not follow
+2024's longer waits. Larger steps react faster but are noisy: outcomes arrive days late
+and in bursts (a waiting voyage reveals hundreds of predictions at once on arrival). A
+window over the last month's outcomes is the smoother estimator here. Lessons: tune an
+adaptive method on a period that contains drift, and do not assume prompt feedback.
+
+That is the operational lesson: recalibrate the intervals on a schedule (cheap,
+label-driven) long before the model itself needs retraining.
 
 ## Serving: API, Docker, demo
 
@@ -449,15 +470,16 @@ curl -s -X POST localhost:8000/v1/eta -H 'content-type: application/json' -d @ex
 ```json
 {
   "as_of": "2024-12-22T22:50:07Z",
-  "eta": {"p10": "2024-12-23T00:45:25Z", "p50": "2024-12-23T01:15:26Z", "p90": "2024-12-23T01:49:19Z"},
+  "eta": {"p10": "2024-12-23T00:50:24Z", "p50": "2024-12-23T01:12:53Z", "p90": "2024-12-23T19:27:01Z"},
   "waiting_now": false,
-  "p_wait_before_arrival": 0.05,
+  "p_wait_before_arrival": 0.16,
   "distance_to_gate_km": 28.7,
   "points_received": 120, "points_used": 120, "model_version": "v2"
 }
 ```
 
-(Abridged. That ship, BRO NISSUM, actually arrived at 01:17.)
+(Abridged. That ship, BRO NISSUM, actually arrived at 01:17. The long P90 is the model's
+16% chance that it queues first: the interval is a mixture, not a symmetric error bar.)
 
 - **One feature implementation.** The request is turned into the same table the training
   pipeline builds and goes through the same `build_features`;
@@ -473,6 +495,9 @@ curl -s -X POST localhost:8000/v1/eta -H 'content-type: application/json' -d @ex
   conformal shifts, provenance). No pickle. `uv run vessel-eta export-model` rebuilds it.
 - **Re-calibration as an operation**: `uv run vessel-eta recalibrate --days 30` re-estimates
   only the interval shifts from recent arrivals and records it in `meta.json`.
+- **Observability**: `/metrics` exports request counts and latency, and the distribution of
+  the predictions themselves (ETA, interval width, P(wait), branch) for Prometheus — the
+  earliest drift signal, available before any outcome is known.
 
 The shipped artifact is trained on arrivals up to 2024-11-30 and re-calibrated on November,
 so the demo's December voyages are unseen. On all December 2024 arrivals (355 voyages,
@@ -480,9 +505,9 @@ so the demo's December voyages are unseen. On all December 2024 arrivals (355 vo
 
 | state | distance / speed MAE | model MAE | 80% interval holds | median width |
 |---|---|---|---|---|
-| all | 68.9 h | **53.9 h** | 0.74 | 106 h |
-| moving, < 30 km from gate | 13.5 h | **11.2 h** | 0.82 | 1.2 h |
-| moving, ≥ 30 km | 17.9 h | **14.5 h** | 0.77 | 17 h |
+| all | 68.9 h | **53.8 h** | 0.74 | 105 h |
+| moving, < 30 km from gate | 13.5 h | **11.4 h** | 0.83 | 2 h |
+| moving, ≥ 30 km | 17.9 h | **14.3 h** | 0.77 | 22 h |
 | at anchor | 120.6 h | **91.7 h** | 0.70 | 172 h |
 
 Coverage is under target here, and that is the honest flip side of the 2024 study: a
@@ -490,6 +515,71 @@ one-month re-calibration window helps over the year (0.75 → 0.79) but not ever
 November → December is one where it hurt (Dec 2024 in that study: 0.81 static, 0.77
 re-calibrated). A longer or exponentially weighted window would trade a little speed of
 adaptation for stability.
+
+## Operating the model: monitoring, gates, a replayed year
+
+[`monitoring.py`](src/vessel_eta/monitoring.py) ·
+`uv run vessel-eta monitor --month 2024-12 [--apply]` ·
+[`docs/model_card.md`](docs/model_card.md) · [`docs/design.md`](docs/design.md)
+
+Each closed month is scored like an on-call engineer would: MAE against distance/speed,
+interval coverage, and PSI drift of key inputs and of the predictions against the
+training reference stored in the artifact. **ALERT** if a quality gate fails (worse than
+physics, coverage outside 0.70–0.90), **WARN** if only inputs drift, else **OK**; the
+interval shifts are re-estimated from the month's outcomes either way.
+
+**The first version of the gates was wrong, and the replay showed it.** With the textbook
+PSI threshold of 0.25 every month of 2024 was an ALERT, almost always on the number of
+ships waiting at the port — yet the queue level was the same as in 2023 (9–11 ships). The
+cause: the queue sits at one level for weeks, so *any* single month looks shifted against
+a whole year. Inside the training year itself, 10 of 12 months scored above 0.25 (up to
+2.0). An alert that always fires is no alert. Each feature's limit is now
+max(0.25, its own 95th-percentile month-to-month PSI in training), stored with the
+reference — 1.4–1.8 for the queue, 0.26–0.33 for ship size.
+
+A model trained on 2023 and never refit, monitored through 2024
+([`scripts/replay_monitoring.py`](scripts/replay_monitoring.py),
+[`reports/monitoring/replay_2024.md`](reports/monitoring/replay_2024.md), one report per month):
+
+| month | model MAE | physics MAE | coverage | status | drifted inputs |
+|---|---|---|---|---|---|
+| 2024-01 | 79.0 h | 97.0 h | 0.71 | OK | — |
+| 2024-02 | 127.2 h | 149.1 h | 0.71 | WARN | draft, length (fleet mix) |
+| 2024-03 | 65.0 h | 83.5 h | 0.83 | OK | — |
+| 2024-04 | 100.6 h | 118.1 h | 0.73 | WARN | draft |
+| 2024-05 | 84.0 h | 98.8 h | 0.82 | WARN | length |
+| 2024-06 | 67.5 h | 84.0 h | 0.82 | OK | — |
+| 2024-07 | 82.0 h | 99.5 h | 0.78 | OK | — |
+| 2024-08 | 48.3 h | 62.4 h | 0.84 | WARN | draft |
+| 2024-09 | 47.2 h | 61.4 h | 0.80 | OK | — |
+| 2024-10 | 25.9 h | 31.5 h | 0.84 | WARN | draft |
+| 2024-11 | 24.5 h | 30.5 h | 0.80 | WARN | draft |
+| 2024-12 | 57.8 h | 68.9 h | 0.73 | WARN | draft |
+
+No month failed a quality gate: the model beat physics every month and the monthly
+re-calibration kept coverage inside the band. From August the draft of arriving ships
+drifts persistently — the signal to retrain on recent data. That signal was right: the
+shipped artifact, retrained with 2024, scores the same December at **53.8 h** MAE instead of
+57.8 h, and its monitoring report ([`reports/monitoring/2024-12.md`](reports/monitoring/2024-12.md))
+is **OK**, with draft back within its normal range (PSI 0.16).
+
+**Engineering checks** run in CI on every push: ruff, **mypy** (no errors, including a real
+bug it found — the GRU could crash restoring weights if validation never improved),
+pytest with a **coverage gate** (≥ 80%, at 83%: the core — cleaning, labels, features,
+models, serving, monitoring — is at 91–100%, and an end-to-end test drives the CLI from
+partitions to a monitoring report; the optional PyTorch module is tested only when
+installed), and a Docker build with an API smoke test.
+Load test, one uvicorn process on a laptop, the 120-point request from `examples/`
+([`scripts/load_test.py`](scripts/load_test.py)):
+
+| concurrent clients | throughput | p50 | p95 | p99 | errors |
+|---|---|---|---|---|---|
+| 1 | 112 req/s | 8.9 ms | 9.5 ms | 10.1 ms | 0 |
+| 8 | 219 req/s | 36 ms | 42 ms | 60 ms | 0 |
+| 32 | 190 req/s | 167 ms | 205 ms | 220 ms | 0 |
+
+Inference is CPU-bound under the GIL, so one process saturates around 200 req/s; it scales
+out with `--workers` or replicas, not threads.
 
 ## Quickstart
 
@@ -506,10 +596,13 @@ uv run vessel-eta train                     # v1: baselines + LightGBM, March te
 uv run vessel-eta train --version v2        # v2: decomposed ETA with conformal intervals
 uv run python scripts/cv_v2_coverage.py     # v2 interval coverage, grouped CV inside Jan-Feb
 uv run vessel-eta train --version v2 --test-start 2024-01-01   # train 2023, test 2024
-uv run python scripts/rolling_conformal.py  # 2024 with monthly re-calibrated intervals
+uv run python scripts/adaptive_calibration.py  # static vs monthly vs daily-tracked intervals, 2024
 uv run vessel-eta export-model --train-end 2024-12-01   # production artifact
 uv run vessel-eta recalibrate --days 30 --end 2024-12-01
 uv run uvicorn vessel_eta.serving.app:app --port 8000   # API + map demo
+uv run vessel-eta monitor --month 2024-12   # monthly quality / drift / gates report
+uv run python scripts/replay_monitoring.py  # a year of monitoring, replayed
+uv run python scripts/load_test.py --concurrency 8
 uv run pytest
 ```
 
@@ -529,7 +622,9 @@ client, so throughput scales with connections: going from 6 to 12 took the pipel
    out-of-time test (holds up; intervals need monthly re-calibration). Still open: berth
    line-ups (Marine Exchange, paid) or terminal schedules.
 7. ~~**Serving**~~ — FastAPI, artifact, re-calibration command, Docker + CI smoke test, map demo.
-8. **Anomalies** — AIS gaps, loitering, rendezvous; vessel-type classifier from motion only.
+8. ~~**Operations**~~ — monthly monitoring with calibrated drift gates, a replayed year,
+   adaptive calibration study, metrics, load test, model card, design doc.
+9. **Anomalies** — AIS gaps, loitering, rendezvous; vessel-type classifier from motion only.
 
 ## Layout
 
@@ -548,7 +643,10 @@ src/vessel_eta/
   artifact.py              save / load the model (gzipped LightGBM text + meta.json)
   production.py            train on all data, re-calibrate intervals
   serving/predictor.py     request -> training feature path -> ETA distribution
-  serving/app.py           FastAPI app; serving/static/ = map demo
+  serving/app.py           FastAPI app + Prometheus metrics; serving/static/ = map demo
+  calibration.py           daily quantile tracking of the interval shifts
+  monitoring.py            monthly quality, PSI drift with per-feature limits, gates
+  scalars.py               typed access to polars scalars (keeps mypy honest)
   geo.py                   distances, port geofence
   tracks.py                spikes / ghosts / replays -> one clean track per ship
   voyages.py               arrivals, approach segments, ETA labels
@@ -560,12 +658,15 @@ scripts/plot_labels.py     README figures
 scripts/cv_ablation.py     model selection table
 scripts/cv_v2_coverage.py  v2 interval coverage in grouped CV
 scripts/travel_models.py   LightGBM vs MLP vs GRU for travel time
-scripts/rolling_conformal.py  2024 out-of-time: static vs monthly re-calibrated intervals
+scripts/adaptive_calibration.py  2024: static vs monthly vs daily-tracked intervals
 scripts/make_demo_samples.py  December 2024 voyages for the demo
 scripts/evaluate_artifact.py  score the shipped artifact on unseen arrivals
 artifacts/eta_v2/          the shipped model
 examples/request.json      a sample API request
 Dockerfile                 API image (no PyTorch), smoke-tested in CI
+docs/model_card.md         intended use, data, evaluation, limitations
+docs/design.md             architecture and the decisions behind it
+reports/monitoring/        monthly monitoring reports (December 2024, replayed 2024)
 reports/                   eval reports (markdown + json)
 tests/                     offline tests (fake HTTP server, synthetic files and tracks)
 ```

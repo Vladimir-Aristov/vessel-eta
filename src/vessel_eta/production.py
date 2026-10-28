@@ -21,15 +21,18 @@ from vessel_eta.experiment import load_features
 from vessel_eta.features import BASE_FEATURES
 from vessel_eta.geo import Port
 from vessel_eta.modeling import make_split
+from vessel_eta.monitoring import MonthReport, evaluate_month, reference_profile, widen_after
 from vessel_eta.scalars import as_datetime
 
 FAR_FUTURE = dt.datetime(2100, 1, 1, tzinfo=dt.UTC)
 NO_WIDEN = {True: (0.0, 0.0), False: (0.0, 0.0)}
 
 
-def _labelled_features(port: Port) -> tuple[pl.DataFrame, pl.DataFrame]:
-    feats, voyages = load_features(port)
-    points = pl.read_parquet(PROCESSED_DIR / f"eta_points_{port.name}.parquet")
+def _labelled_features(
+    port: Port, processed: Path = PROCESSED_DIR
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    feats, voyages = load_features(port, processed)
+    points = pl.read_parquet(processed / f"eta_points_{port.name}.parquet")
     return add_targets(feats, waiting_episodes(points)), voyages
 
 
@@ -38,12 +41,15 @@ def train_production(
     out: Path = artifact.DEFAULT_DIR,
     version: str = "v2",
     train_end: dt.datetime | None = None,
+    processed: Path = PROCESSED_DIR,
 ) -> dict:
     """train_end: use only arrivals before it (e.g. to keep the demo's voyages unseen)."""
-    feats, voyages = _labelled_features(port)
+    feats, voyages = _labelled_features(port, processed)
     split = make_split(feats, voyages, test_start=FAR_FUTURE, train_end=train_end)
     model = DecomposedETA.fit(split.train, split.valid, BASE_FEATURES)
     model.calibrate(split.valid)
+    # drift reference for monitoring: training inputs, predictions on held-out ships
+    reference = reference_profile(split.train, model.predict(split.valid)["eta_p50"].to_numpy())
     arrivals = split.train["arrival_ts"].to_list() + split.valid["arrival_ts"].to_list()
     info = {
         "version": version,
@@ -55,13 +61,18 @@ def train_production(
             "ships": split.train["mmsi"].n_unique() + split.valid["mmsi"].n_unique(),
             "rows": split.train.height + split.valid.height,
         },
+        "reference": reference,
     }
     artifact.save(model, out, info)
     return info
 
 
 def recalibrate(
-    port: Port, path: Path = artifact.DEFAULT_DIR, days: int = 30, end: dt.datetime | None = None
+    port: Port,
+    path: Path = artifact.DEFAULT_DIR,
+    days: int = 30,
+    end: dt.datetime | None = None,
+    processed: Path = PROCESSED_DIR,
 ) -> dict:
     """Re-estimate interval shifts on arrivals in the `days` days before `end`.
 
@@ -69,7 +80,7 @@ def recalibrate(
     in a live system it would be now.
     """
     model, _ = artifact.load(path)
-    feats, voyages = _labelled_features(port)
+    feats, voyages = _labelled_features(port, processed)
     end = end or as_datetime(voyages["arrival_ts"].max())
     start = end - dt.timedelta(days=days)
     recent = voyages.filter(pl.col("arrival_ts").is_between(start, end, closed="left"))
@@ -86,3 +97,36 @@ def recalibrate(
     }
     artifact.save_widen(path, widen, info)
     return {**info, "widen": {"waiting": list(widen[True]), "moving": list(widen[False])}}
+
+
+def month_rows(feats: pl.DataFrame, voyages: pl.DataFrame, month: str) -> pl.DataFrame:
+    """Feature rows of voyages that arrived in `month` (YYYY-MM), with the physics baseline."""
+    start = dt.datetime.strptime(month, "%Y-%m").replace(tzinfo=dt.UTC)
+    end = (start + dt.timedelta(days=32)).replace(day=1)
+    arrived = voyages.filter(pl.col("arrival_ts").is_between(start, end, closed="left"))
+    return feats.join(arrived.select("voyage_id", "arrival_ts"), on="voyage_id").with_columns(
+        pred_naive=pl.col("naive_eta_min").cast(pl.Float64)
+    )
+
+
+def monitor(
+    port: Port,
+    month: str,
+    path: Path = artifact.DEFAULT_DIR,
+    apply: bool = False,
+    method: str = "window",
+    reports: Path | None = None,
+    processed: Path = PROCESSED_DIR,
+) -> MonthReport:
+    model, meta = artifact.load(path)
+    if "reference" not in meta:
+        raise ValueError(f"{path} has no drift reference: re-export it with `export-model`")
+    feats, voyages = _labelled_features(port, processed)
+    rep = evaluate_month(model, meta["reference"], month_rows(feats, voyages, month), month, method)
+    if reports is not None:
+        reports.mkdir(parents=True, exist_ok=True)
+        (reports / f"{month}.md").write_text(rep.markdown())
+    if apply:
+        artifact.save_widen(path, widen_after(rep), {"month": month, "method": method,
+                                                     "status": rep.status})  # fmt: skip
+    return rep

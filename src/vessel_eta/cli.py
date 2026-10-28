@@ -21,6 +21,7 @@ from vessel_eta.config import (
     INTERIM_DIR,
     PROCESSED_DIR,
     RAW_DIR,
+    ROOT,
     DataConfig,
     load_config,
 )
@@ -38,6 +39,7 @@ console = Console()
 log = logging.getLogger("vessel_eta")
 
 MANIFEST = "_manifest.jsonl"
+REPORTS_MONITORING = ROOT / "reports" / "monitoring"
 LABEL_INPUT_COLS = [
     "mmsi", "ts", "lat", "lon", "sog", "cog", "heading", "status",
     "vessel_type", "length", "width", "draft", "vessel_name",
@@ -279,13 +281,14 @@ def export_model_cmd(
         dt.datetime | None,
         typer.Option(formats=["%Y-%m-%d"], help="train on arrivals before this day only"),
     ] = None,
+    processed: Path = PROCESSED_DIR,
     port_config: Annotated[Path, typer.Option("--port", help="Port YAML")] = DEFAULT_PORT_CONFIG,
 ) -> None:
     """Train the production model on labelled data and save the artifact."""
     from vessel_eta.production import train_production
 
     te = train_end.replace(tzinfo=dt.UTC) if train_end else None
-    info = train_production(load_port(port_config), out, train_end=te)
+    info = train_production(load_port(port_config), out, train_end=te, processed=processed)
     console.print_json(data=info)
 
 
@@ -297,13 +300,35 @@ def recalibrate_cmd(
         typer.Option(formats=["%Y-%m-%d"], help="window end (default: newest arrival)"),
     ] = None,
     path: Annotated[Path, typer.Option(help="Artifact directory")] = Path("artifacts/eta_v2"),
+    processed: Path = PROCESSED_DIR,
     port_config: Annotated[Path, typer.Option("--port", help="Port YAML")] = DEFAULT_PORT_CONFIG,
 ) -> None:
     """Re-estimate only the interval shifts of an exported model from recent arrivals."""
     from vessel_eta.production import recalibrate
 
     e = end.replace(tzinfo=dt.UTC) if end else None
-    console.print_json(data=recalibrate(load_port(port_config), path, days, e))
+    res = recalibrate(load_port(port_config), path, days, e, processed=processed)
+    console.print_json(data=res)
+
+
+@app.command("monitor")
+def monitor_cmd(
+    month: Annotated[str, typer.Option(help="Closed month to evaluate, YYYY-MM")],
+    path: Annotated[Path, typer.Option(help="Artifact directory")] = Path("artifacts/eta_v2"),
+    apply: Annotated[bool, typer.Option(help="Write the re-estimated interval shifts")] = False,
+    method: Annotated[str, typer.Option(help="window | tracking")] = "window",
+    processed: Path = PROCESSED_DIR,
+    reports_dir: Path = REPORTS_MONITORING,
+    port_config: Annotated[Path, typer.Option("--port", help="Port YAML")] = DEFAULT_PORT_CONFIG,
+) -> None:
+    """Monthly check of a shipped model: quality, drift (PSI), gates, re-calibration."""
+    from vessel_eta.production import monitor
+
+    port = load_port(port_config)
+    rep = monitor(port, month, path, apply, method, reports_dir, processed)
+    console.print(rep.markdown())
+    if rep.status == "ALERT":
+        raise typer.Exit(2)
 
 
 @app.command("report")

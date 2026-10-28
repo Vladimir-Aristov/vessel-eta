@@ -21,7 +21,7 @@ import numpy as np
 import polars as pl
 
 from vessel_eta import artifact
-from vessel_eta.decompose import WAITING_NOW_KN, DecomposedETA
+from vessel_eta.decompose import DecomposedETA, waiting_now
 from vessel_eta.features import build_features
 from vessel_eta.geo import DEFAULT_PORT_CONFIG, Port, load_port
 from vessel_eta.scalars import as_datetime
@@ -114,7 +114,7 @@ def request_features(
             schema=STATE_SCHEMA,
         )  # fmt: skip
     feats = build_features(table, voyages, state_df, port, every_min=None)
-    return feats.tail(1).with_columns(waiting_now=pl.col("sog_mean_30m") < WAITING_NOW_KN)
+    return feats.tail(1).with_columns(waiting_now=waiting_now())
 
 
 class Predictor:

@@ -172,3 +172,17 @@ def test_metrics_count_requests_and_predictions(client):
     assert 'vessel_eta_requests_total{endpoint="/v1/eta",status="422"}' in text
     assert "vessel_eta_predicted_eta_hours_count" in text
     assert 'vessel_eta_model_info{trained_until="",version="test"} 1.0' in text
+
+
+def test_monthly_report_end_to_end(trained):
+    from vessel_eta.modeling import baseline_predictions
+    from vessel_eta.monitoring import evaluate_month, reference_profile
+
+    model, _, feats, _, voyages = trained
+    rows = feats.join(voyages.select("voyage_id", "arrival_ts"), on="voyage_id")
+    rows = baseline_predictions(rows, rows)
+    ref = reference_profile(rows, model.predict(rows)["eta_p50"].to_numpy())
+    rep = evaluate_month(model, ref, rows, "2023-01")
+    assert rep.status in {"OK", "WARN", "ALERT"}
+    assert 0 <= rep.quality["coverage"] <= 1 and rep.drift["sog"] < 0.05  # same data: no drift
+    assert rep.new_widen is not None and "Monitoring report 2023-01" in rep.markdown()

@@ -36,6 +36,17 @@ MERGE_GAP_H = 6.0
 MIN_EPISODE_H = 2.0
 WAITING_NOW_KN = 2.0  # routing threshold on the trailing 30-min mean SOG
 
+
+def waiting_now() -> pl.Expr:
+    """Routing flag, visible at prediction time: mean SOG over the last 30 min < 2 kn.
+
+    Falls back to the current SOG, and to "under way" when speed is unknown altogether
+    (287 of 3.3M rows), so every row lands in exactly one branch.
+    """
+    speed = pl.coalesce(pl.col("sog_mean_30m"), pl.col("sog"))
+    return (speed < WAITING_NOW_KN).fill_null(False)
+
+
 QUANTILES = np.array([0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95])
 OUT_Q = (0.1, 0.5, 0.9)
 
@@ -105,7 +116,7 @@ def add_targets(feats: pl.DataFrame, episodes: pl.DataFrame) -> pl.DataFrame:
         )  # fmt: skip
         .sort("voyage_id", "ts")
         .with_columns(
-            waiting_now=pl.col("sog_mean_30m") < WAITING_NOW_KN,
+            waiting_now=waiting_now(),
             stop_next=pl.col("ep_end").is_not_null(),
             _to_start=((pl.col("ep_start") - pl.col("ts")).dt.total_seconds() / 60).clip(
                 lower_bound=0
@@ -295,7 +306,9 @@ class DecomposedETA:
         df = df.with_row_index("_i")
         moving = df.filter(~pl.col("waiting_now"))
         waiting = df.filter("waiting_now")
-        q = np.empty((df.height, len(OUT_Q)))
+        if df["waiting_now"].null_count():
+            raise ValueError("waiting_now has nulls: build it with decompose.waiting_now()")
+        q = np.full((df.height, len(OUT_Q)), np.nan)
         p = np.full(df.height, np.nan)
         if moving.height:
             pm = self.stop.predict(moving)

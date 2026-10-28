@@ -74,7 +74,7 @@ def test_targets_before_during_after_episode():
     points = voyage_points(rows)
     eps = waiting_episodes(points)
     feats = points.with_columns(sog_mean_30m=pl.col("sog")).select(
-        "voyage_id", "ts", "sog_mean_30m", "eta_min"
+        "voyage_id", "ts", "sog", "sog_mean_30m", "eta_min"
     )
     t = add_targets(feats, eps)
     ep_start = eps["ep_start"][0]
@@ -147,3 +147,19 @@ def test_conformal_widen_targets_ten_percent_each_side():
     assert abs(np.mean(y > widened["eta_p90"].to_numpy()) - 0.1) < 0.02
     assert (widened["eta_p10"] <= widened["eta_p50"]).all()
     assert (widened["eta_p90"] >= widened["eta_p50"]).all()
+
+
+def test_routing_flag_is_never_null():
+    from vessel_eta.decompose import waiting_now
+
+    df = pl.DataFrame({"sog_mean_30m": [0.5, None, None, 5.0], "sog": [9.0, 0.1, None, None]})
+    flags = df.select(waiting_now())["sog_mean_30m"].to_list()
+    assert flags == [True, True, False, False]  # mean wins; then current SOG; unknown -> under way
+
+
+def test_predict_refuses_rows_without_a_branch():
+    from vessel_eta.decompose import DecomposedETA
+
+    model = DecomposedETA.__new__(DecomposedETA)  # predict checks the input first
+    with pytest.raises(ValueError, match="waiting_now"):
+        model.predict(pl.DataFrame({"waiting_now": [True, None]}))
